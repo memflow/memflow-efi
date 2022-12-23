@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+*.bsp
+
+/scripts/_efi
+/scripts/efi.raw
+/scripts/efi.vmdk

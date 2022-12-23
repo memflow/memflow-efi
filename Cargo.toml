@@ -1,0 +1,18 @@
+[profile.release]
+opt-level = 2 # fast and small wasm
+rpath = true
+
+# Optimize all dependencies even in debug builds:
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.bench]
+debug = true
+
+[workspace]
+members = [
+    "memflow-efi-service",
+]
+default-members = [
+    "memflow-efi-service",
+]

@@ -1,0 +1,18 @@
+[package]
+name = "memflow-efi-service"
+version = "0.1.0"
+authors = ["ko1N <ko1N1337@gmail.com>"]
+edition = "2021"
+description = "efi service to provide physical memory access"
+homepage = "https://memflow.github.io/"
+repository = "https://github.com/memflow/memflow-efi.git"
+documentation = "https://docs.rs/memflow-efi"
+keywords = [ "memflow", "introspection", "memory" ]
+categories = [ "api-bindings", "memory-management", "os" ]
+readme = "README.md"
+license = "MIT"
+
+[dependencies]
+r-efi = "4.1"
+x86_64 = "0.14"
+atomic_refcell = "0.1.6"
