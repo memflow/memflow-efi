@@ -13,6 +13,7 @@ pub fn wait_for_debugger() {
 #[lang = "eh_personality"]
 fn eh_personality() {}
 
+/*
 #[panic_handler]
 fn panic_handler(info: &core::panic::PanicInfo) -> ! {
     if let Some(location) = info.location() {
@@ -29,3 +30,4 @@ fn panic_handler(info: &core::panic::PanicInfo) -> ! {
 
     loop {}
 }
+*/

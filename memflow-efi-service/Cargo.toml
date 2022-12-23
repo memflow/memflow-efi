@@ -16,3 +16,8 @@ license = "MIT"
 r-efi = "4.1"
 x86_64 = "0.14"
 atomic_refcell = "0.1.6"
+
+# allocator & logging
+log = "0.4"
+uefi = "0.18"
+uefi-services = "0.15"

@@ -64,9 +64,11 @@ macro_rules! warn {
 #[macro_export]
 macro_rules! info {
     ($format:expr) => (
+        ::log::info!($format);
         log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Info);
     );
     ($format:expr, $($args:tt)*) => (
+        ::log::info!($format, $($args)*);
         log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Info, $($args)*);
     )
 }
