@@ -8,15 +8,20 @@ mod logger;
 mod utils;
 
 use core::borrow::BorrowMut;
+use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
-use r_efi::system::BootCopyMem;
+use r_efi::system::{RuntimeSetVariable, TPL_HIGH_LEVEL};
 use r_efi::*;
 
 static mut SYSTEM_TABLE: MaybeUninit<efi::SystemTable> = MaybeUninit::uninit();
 
 pub fn system_table() -> &'static efi::SystemTable {
     unsafe { &*SYSTEM_TABLE.as_ptr() }
+}
+
+pub fn system_table_mut() -> &'static mut efi::SystemTable {
+    unsafe { &mut *SYSTEM_TABLE.as_mut_ptr() }
 }
 
 pub fn runtime_services() -> &'static efi::RuntimeServices {
@@ -27,16 +32,61 @@ pub fn boot_services() -> &'static efi::BootServices {
     unsafe { &*system_table().boot_services }
 }
 
-extern "win64" fn handle_exit_boot_services(_event: base::Event, _context: *mut core::ffi::c_void) {
+extern "win64" fn handle_exit_boot_services(_event: base::Event, _context: *mut c_void) {
     info!("[~] ExitBootServices() has been called.");
 }
 
-extern "win64" fn handle_set_virtual_address_map(
-    _event: base::Event,
-    _context: *mut core::ffi::c_void,
-) {
-    info!("[~] SetVirtualAddressMap() has been called.");
+extern "win64" fn handle_set_virtual_address_map(_event: base::Event, _context: *mut c_void) {
+    // Keep the runtime service loaded
 }
+
+static mut ORIG_SET_VARIABLE: *const c_void = core::ptr::null_mut();
+eficall! {fn hook_set_variable(
+    variable_name: *mut crate::base::Char16,
+    vendor_guid: *mut crate::base::Guid,
+    attributes: u32,
+    data_size: usize,
+    data: *mut c_void,
+) -> crate::base::Status {
+    let orig_func: RuntimeSetVariable = unsafe { core::mem::transmute(ORIG_SET_VARIABLE) };
+    (orig_func)(variable_name, vendor_guid, attributes, data_size, data)
+}
+}
+
+fn hook_service_pointer(orig_func: *mut *mut c_void, hook_func: *mut c_void) -> *mut c_void {
+    let boot_services = unsafe { &*(system_table().boot_services) };
+    let orig_tpl = (boot_services.raise_tpl)(TPL_HIGH_LEVEL);
+
+    let orig_func_bak = unsafe { *orig_func };
+    unsafe { *orig_func = hook_func };
+
+    {
+        let system_table_header = &mut system_table_mut().hdr;
+        system_table_header.crc32 = 0;
+        (boot_services.calculate_crc32)(
+            system_table_header as *mut _ as *mut _,
+            system_table_header.header_size as usize,
+            &mut system_table_header.crc32,
+        );
+    }
+
+    (boot_services.restore_tpl)(orig_tpl);
+
+    orig_func_bak
+}
+
+/*
+    // Swap the pointers
+    // GNU-EFI and InterlockedCompareExchangePointer
+    // are not friends
+    VOID* OriginalFunction = *ServiceTableFunction;
+    *ServiceTableFunction = NewFunction;
+
+    // Change the table CRC32 signature
+    ServiceTableHeader->CRC32 = 0;
+    BS->CalculateCrc32((UINT8*)ServiceTableHeader, ServiceTableHeader->HeaderSize, &ServiceTableHeader->CRC32);
+}
+*/
 
 #[export_name = "efi_main"]
 pub extern "C" fn main(
@@ -56,7 +106,7 @@ pub extern "C" fn main(
         efi::EVT_NOTIFY_SIGNAL,
         efi::TPL_CALLBACK,
         Some(handle_set_virtual_address_map),
-        runtime_services() as *const _ as *mut core::ffi::c_void,
+        runtime_services() as *const _ as *mut c_void,
         &efi::EVENT_GROUP_VIRTUAL_ADDRESS_CHANGE,
         event_virtual_address.borrow_mut(),
     );
@@ -74,7 +124,7 @@ pub extern "C" fn main(
         efi::EVT_NOTIFY_SIGNAL,
         efi::TPL_CALLBACK,
         Some(handle_exit_boot_services),
-        runtime_services() as *const _ as *mut core::ffi::c_void,
+        runtime_services() as *const _ as *mut c_void,
         &efi::EVENT_GROUP_EXIT_BOOT_SERVICES,
         event_boot_services.borrow_mut(),
     );
@@ -113,6 +163,16 @@ pub extern "C" fn main(
     if r.is_error() {
         return r;
     }
+
+    // TODO: Unload routine?
+    // Setup hooks
+
+    // Hook SetVariable (should not fail)
+    let runtime_services = unsafe { &mut *(system_table_mut().runtime_services) };
+    hook_service_pointer(
+        &mut runtime_services.set_variable as *mut _ as *mut *mut _,
+        hook_set_variable as *mut _,
+    );
 
     //unsafe { core::ptr::copy(0 as *mut u8, 0x1000 as *mut u8, 0x1000) };
 
