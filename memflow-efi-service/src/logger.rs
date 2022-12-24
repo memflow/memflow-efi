@@ -1,11 +1,16 @@
-use core::fmt;
+use core::{
+    fmt,
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
-use atomic_refcell::AtomicRefCell;
 use x86_64::instructions::port::PortWriteOnly;
+
+use crate::utils::Mutex;
 
 pub struct Serial;
 
-pub static PORT: AtomicRefCell<PortWriteOnly<u8>> = AtomicRefCell::new(PortWriteOnly::new(0x3f8));
+pub static mut PORT: Mutex<PortWriteOnly<u8>> = Mutex::new(PortWriteOnly::new(0x3f8));
 
 static LOG_LEVEL_NAMES: [&str; 5] = ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
 
@@ -26,9 +31,8 @@ impl fmt::Display for LogLevel {
 
 impl fmt::Write for Serial {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let mut port = PORT.borrow_mut();
         for b in s.bytes() {
-            unsafe { port.write(b) }
+            unsafe { PORT.lock().write(b) }
         }
         Ok(())
     }
@@ -64,11 +68,9 @@ macro_rules! warn {
 #[macro_export]
 macro_rules! info {
     ($format:expr) => (
-        ::log::info!($format);
         log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Info);
     );
     ($format:expr, $($args:tt)*) => (
-        ::log::info!($format, $($args)*);
         log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Info, $($args)*);
     )
 }
