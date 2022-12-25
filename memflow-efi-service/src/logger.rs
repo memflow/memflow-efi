@@ -10,7 +10,7 @@ use crate::utils::Mutex;
 
 pub struct Serial;
 
-pub static mut PORT: Mutex<PortWriteOnly<u8>> = Mutex::new(PortWriteOnly::new(0x3f8));
+pub static mut PORT: PortWriteOnly<u8> = PortWriteOnly::new(0x3f8);
 
 static LOG_LEVEL_NAMES: [&str; 5] = ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
 
@@ -32,7 +32,7 @@ impl fmt::Display for LogLevel {
 impl fmt::Write for Serial {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for b in s.bytes() {
-            unsafe { PORT.lock().write(b) }
+            unsafe { PORT.write(b) }
         }
         Ok(())
     }

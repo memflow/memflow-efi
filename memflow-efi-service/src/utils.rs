@@ -1,4 +1,8 @@
-use core::ffi::c_void;
+use core::{
+    ffi::c_void,
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use ::r_efi::system::{RuntimeSetVariable, TPL_HIGH_LEVEL};
 
@@ -65,6 +69,23 @@ pub fn hook_service_pointer(orig_func: *mut *mut c_void, hook_func: *mut c_void)
     orig_func_bak
 }
 
+pub fn find_export(base: *const c_void, size: usize, name: &str) -> Option<usize> {
+    /*
+    let buf = unsafe { core::slice::from_raw_parts(base as *const _, size) };
+
+    use ::goblin::pe::{options::ParseOptions, PE};
+    let pe = PE::parse_with_opts(buf, &ParseOptions { resolve_rva: false }).ok()?;
+    let export = pe
+        .exports
+        .iter()
+        .find(|e| e.name.is_some() && e.name.unwrap() == name)?;
+    export.offset
+
+    //let pe = pelite::PeView::from_bytes(buf).ok()?;
+    */
+    None
+}
+
 pub struct Mutex<T> {
     lock: AtomicBool,
     inner: T,
@@ -79,7 +100,11 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock<'a>(&'a mut self) -> MutexGuard<'a, T> {
-        while !self.lock.compare_and_swap(false, true, Ordering::SeqCst) {
+        while self
+            .lock
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             // TODO: yield thread?
         }
         MutexGuard { parent: self }
