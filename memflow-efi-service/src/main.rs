@@ -26,7 +26,7 @@ use r_efi::{protocols::file::ProtocolOpen, system::MemoryDescriptor};
 
 // system table
 static mut SYSTEM_TABLE: MaybeUninit<efi::SystemTable> = MaybeUninit::uninit();
-static mut EFI_MEM_MAPS: MaybeUninit<EfiMemMaps> = MaybeUninit::uninit();
+static mut EFI_MEM_MAPS: EfiMemMaps = EfiMemMaps::new();
 
 pub fn system_table() -> &'static efi::SystemTable {
     unsafe { &*SYSTEM_TABLE.as_ptr() }
@@ -147,10 +147,10 @@ pub extern "C" fn main(
     init_dummy_protocol(image_handle);
 
     // retrieve mem maps
-    match EfiMemMaps::load(boot_services()) {
-        Ok(mem_maps) => {
+    let mem_maps = unsafe { &mut EFI_MEM_MAPS };
+    match mem_maps.load_maps(boot_services()) {
+        Ok(_) => {
             info!("retrieved a total of {} mem_maps", mem_maps.len());
-            unsafe { EFI_MEM_MAPS = MaybeUninit::new(mem_maps) };
         }
         Err(err) => {
             error!("mem_maps could not be retrieved, exiting...");

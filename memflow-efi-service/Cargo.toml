@@ -17,3 +17,4 @@ r-efi = "4.1"
 x86_64 = "0.14"
 atomic_refcell = "0.1.6"
 alloc-no-stdlib = "2.0"
+#memflow = { version = "0.2.0-beta9", default-features = false } # TODO:

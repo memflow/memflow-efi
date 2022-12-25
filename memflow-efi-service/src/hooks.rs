@@ -59,15 +59,40 @@ eficall! {fn hook_set_variable(
         if guid.as_bytes() == target_guid.as_bytes() {
             let mfcmd = unsafe { &*(data as *mut MemflowCommand) };
             if mfcmd.magic == 0x2b54a004 && !mfcmd.src.is_null() && !mfcmd.dst.is_null() && mfcmd.len > 0 {
-                unsafe { core::ptr::write_bytes(mfcmd.dst, 0, mfcmd.len) };
-                //unsafe { core::ptr::copy_nonoverlapping(mfcmd.src, mfcmd.dst, mfcmd.len) };
                 //let test = alloc::boxed::Box::new(133742usize);
                 //return efi::Status::from_usize(*test.as_ref());
 
-                // test iteration
-                let num_mem_maps = unsafe { (&*EFI_MEM_MAPS.as_ptr()).len() };
-               unsafe { *(mfcmd.dst as *mut usize) = num_mem_maps };
-                return efi::Status::SUCCESS;
+                // iterate page by page
+                // TODO: replace with memflow's pagechunk iterator
+                /*
+                for (page_addr, out) in CSliceMut::from(out).page_chunks(addr.address(), 0x1000 /* TODO: EFI_PAGE_SIZE */) {
+                }
+                */
+                // TODO: tests
+                let mem_maps = unsafe { &EFI_MEM_MAPS };
+
+                let mut result = efi::Status::ACCESS_DENIED;
+
+                let mut offs = 0usize;
+                while offs < mfcmd.len {
+                    let addr = mfcmd.src as usize + offs;
+                    let addr_end = ((addr + 0x1000) - (addr + 0x1000) % 0x1000).min(mfcmd.src as usize + mfcmd.len);
+                    let addr_align = addr - addr % 0x1000;
+                    let len_align = addr_end - addr; // FB for first chunk
+
+                    //println!("{:x} - {:x}/{:x} - {:x}", offs, addr, addr_align, addr + len_align);
+
+                    if mem_maps.is_mapped(addr_align as u64) {
+                        unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                        result = efi::Status::SUCCESS;
+                    } else {
+                        // TODO: needed, buffers are 0-filled anyways
+                        unsafe { core::ptr::write_bytes((mfcmd.dst as usize + offs) as *mut u8, 0, len_align) };
+                    }
+
+                    offs += len_align;
+                }
+                return result;
             } else {
                 return efi::Status::INVALID_PARAMETER;
             }

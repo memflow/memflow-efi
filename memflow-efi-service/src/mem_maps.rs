@@ -10,11 +10,25 @@ use alloc::format;
 
 /// Reads and stores the memory mappings returned by EFI boot services
 pub struct EfiMemMaps {
-    mem_maps: Vec<MemoryDescriptor>,
+    mem_maps: [MemoryDescriptor; 1024],
+    num_mem_maps: usize,
 }
 
 impl EfiMemMaps {
-    pub fn load(boot_services: &efi::BootServices) -> Result<Self, String> {
+    pub const fn new() -> Self {
+        Self {
+            mem_maps: [MemoryDescriptor {
+                r#type: 0,
+                physical_start: 0,
+                virtual_start: 0,
+                number_of_pages: 0,
+                attribute: 0,
+            }; 1024],
+            num_mem_maps: 0,
+        }
+    }
+
+    pub fn load_maps(&mut self, boot_services: &efi::BootServices) -> Result<(), String> {
         let mut tmp_mem_maps = [0u8; 1];
         let mut mem_maps_size = 0usize;
         let mut map_key = 0usize;
@@ -67,10 +81,18 @@ impl EfiMemMaps {
         }
 
         // convert this oddity in a regular rust slice
-        let mut mem_maps = Vec::new();
+        //let mut mem_maps = Vec::new();
 
         let num_mem_maps = mem_maps_size / descriptor_size;
         info!("found a total of {} mem_maps:", num_mem_maps);
+        if self.num_mem_maps > 1024 {
+            return Err(format!(
+                "found {} memory maps, out of memory.",
+                self.num_mem_maps
+            ));
+        }
+        self.num_mem_maps = num_mem_maps;
+
         let mut mem_map: &mut MemoryDescriptor = unsafe { core::mem::transmute(mem_maps_ptr) };
         for i in 0..num_mem_maps {
             info!(
@@ -80,7 +102,11 @@ impl EfiMemMaps {
                 mem_map.physical_start,
                 mem_map.number_of_pages
             );
-            mem_maps.push(mem_map.clone());
+            self.mem_maps[i].r#type = mem_map.r#type;
+            self.mem_maps[i].virtual_start = mem_map.virtual_start;
+            self.mem_maps[i].physical_start = mem_map.physical_start;
+            self.mem_maps[i].number_of_pages = mem_map.number_of_pages;
+            self.mem_maps[i].attribute = mem_map.attribute;
 
             mem_map = unsafe {
                 core::mem::transmute((mem_map as *mut _ as usize + descriptor_size) as *mut u8)
@@ -92,10 +118,27 @@ impl EfiMemMaps {
             return Err(format!("free_pool failed with status: `{:?}`", status));
         }
 
-        Ok(Self { mem_maps })
+        Ok(())
     }
 
     pub fn len(&self) -> usize {
-        self.mem_maps.len()
+        self.num_mem_maps
+    }
+
+    /// Checks if the given base_addr is mapped.
+    pub fn is_mapped(&self, base_addr: u64) -> bool {
+        for i in 0..self.num_mem_maps {
+            let mem_map = &self.mem_maps[i];
+            if mem_map.r#type == 7 &&
+            mem_map.physical_start <= base_addr
+                && base_addr < mem_map.physical_start + mem_map.number_of_pages * 0x1000
+            /* TODO: */
+            {
+                return true;
+            }
+        }
+        false
     }
 }
+
+// TODO: tests
