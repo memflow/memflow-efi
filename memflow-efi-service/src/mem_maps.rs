@@ -99,13 +99,13 @@ impl EfiMemMaps {
 
         let mut mem_map: &mut MemoryDescriptor = unsafe { core::mem::transmute(mem_maps_ptr) };
         for i in 0..num_mem_maps {
-            /*debug!(
+            debug!(
                 "memory_map: type={:x}; vstart={:x}; pstart={:x}, pagecnt={:x}",
                 mem_map.r#type,
                 mem_map.virtual_start,
                 mem_map.physical_start,
                 mem_map.number_of_pages
-            );*/
+            );
             self.mem_maps[i].r#type = mem_map.r#type;
             self.mem_maps[i].virtual_start = mem_map.virtual_start;
             self.mem_maps[i].physical_start = mem_map.physical_start;

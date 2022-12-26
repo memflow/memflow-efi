@@ -7,7 +7,7 @@ use ::r_efi::{
     system::{RuntimeSetVariable, TPL_HIGH_LEVEL},
     *,
 };
-use alloc::string::String;
+use alloc::{format, string::String};
 use r_efi::system::{
     ALLOCATE_ADDRESS, ALLOCATE_ANY_PAGES, ALLOCATE_MAX_ADDRESS, CONVENTIONAL_MEMORY, LOADER_DATA,
     RUNTIME_SERVICES_DATA,
@@ -26,8 +26,8 @@ use x86_64::{
 use crate::{boot_services, mem_maps::EfiMemMaps};
 
 pub struct IdentityPageTable {
-    page_table: PageTable, // TODO: align
-    allocator: StaticFrameAllocator<1024>,
+    page_table: PageTable, // TODO: align?
+    allocator: StaticFrameAllocator<4096>,
 }
 
 impl IdentityPageTable {
@@ -43,14 +43,11 @@ impl IdentityPageTable {
         //let mut pt_allocator = IdentityPageTableAllocator {};
 
         // loop through each page in each mapping and create new entries
-        for mem_map in mem_maps.iter() {
-            //.filter(|m| m.r#type == 7 /* TODO: */) {
+        for mem_map in mem_maps.iter().filter(|m| m.r#type <= 7) {
             let mut bytes_offset = 0;
             let mut bytes_left = mem_map.number_of_pages * Size4KiB::SIZE;
 
-            let flags = PageTableFlags::PRESENT
-                | PageTableFlags::WRITABLE
-                | PageTableFlags::USER_ACCESSIBLE; // TODO: HUGE_PAGE ?
+            let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
             info!("bytes_left: {}", bytes_left);
             while bytes_left > 0 {
@@ -78,6 +75,7 @@ impl IdentityPageTable {
                     bytes_offset += Size1GiB::SIZE;
                     bytes_left -= Size1GiB::SIZE;
                 } else if bytes_left >= Size2MiB::SIZE {
+                    info!("mapping 2mib page");
                     match unsafe {
                         pt_mapper.map_to(
                             Page::<Size2MiB>::from_start_address_unchecked(VirtAddr::new(
@@ -95,12 +93,13 @@ impl IdentityPageTable {
                             mem_map.physical_start + bytes_offset
                         ),
                         Err(err) => {
-                            error!("could not add 2mib page_table entry, {:?}", err);
+                            return Err(format!("could not add 2mib page_table entry, for mem_map at {:x} with size {:x}: {:?}", mem_map.physical_start, mem_map.number_of_pages* Size4KiB::SIZE, err));
                         }
                     }
                     bytes_offset += Size2MiB::SIZE;
                     bytes_left -= Size2MiB::SIZE;
-                } else*/ {
+                } else*/
+                {
                     match unsafe {
                         pt_mapper.map_to(
                             Page::<Size4KiB>::from_start_address_unchecked(VirtAddr::new(
@@ -113,13 +112,14 @@ impl IdentityPageTable {
                             &mut self.allocator,
                         )
                     } {
-                        Ok(_) => { /*debug!(
-                                 "4kib page table entry for address {:x} created",
-                                 mem_map.physical_start + bytes_offset
-                             )*/
+                        Ok(_) => {
+                            /*debug!(
+                                "4kib page table entry for address {:x} created",
+                                mem_map.physical_start + bytes_offset
+                            )*/
                         }
                         Err(err) => {
-                            error!("could not add 4kib page_table entry, {:?}", err);
+                            return Err(format!("could not add 4kib page_table entry, for mem_map at {:x} with size {:x}: {:?}", mem_map.physical_start, mem_map.number_of_pages* Size4KiB::SIZE, err));
                         }
                     }
 
@@ -127,36 +127,6 @@ impl IdentityPageTable {
                     bytes_left -= Size4KiB::SIZE;
                 };
             }
-
-            /*
-            for page_num in 0..mem_map.number_of_pages {
-                // TODO: handle bigger pages here as well if it fits
-                unsafe {
-                    match pt_mapper.map_to(
-                        Page::<Size4KiB>::from_start_address_unchecked(VirtAddr::new(
-                            mem_map.physical_start + page_num * 0x1000,
-                        )),
-                        PhysFrame::from_start_address_unchecked(PhysAddr::new(
-                            mem_map.physical_start + page_num * 0x1000,
-                        )),
-                        flags,
-                        &mut self.allocator,
-                    ) {
-                        Ok(_) =>
-                        /*debug!(
-                            "page table entry for address {} created",
-                            mem_map.physical_start + page_num * 0x1000
-                        )*/
-                        {
-                            ()
-                        }
-                        Err(err) => {
-                            error!("could not add page_table entry, {:?}", err)
-                        }
-                    }
-                }
-            }
-                */
         }
 
         Ok(())
@@ -186,49 +156,44 @@ unsafe impl<const N: usize> FrameAllocator<Size4KiB> for StaticFrameAllocator<N>
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
         if self.used_frames < self.frames.len() {
             let addr = self.frames[self.used_frames].as_ptr() as u64;
-            let aligned_addr = (addr + Size4KiB::SIZE) & (addr + Size4KiB::SIZE) % Size4KiB::SIZE;
+            let aligned_addr = align_addr_forward(addr);
             self.used_frames += 1;
+            info!("allocated frame: {:x}", aligned_addr);
             PhysFrame::from_start_address(PhysAddr::new(aligned_addr)).ok()
         } else {
+            info!("all frames used");
             None
         }
     }
 }
 
+fn align_addr_forward(addr: u64) -> u64 {
+    if addr % Size4KiB::SIZE == 0 {
+        addr
+    } else {
+        (addr + Size4KiB::SIZE) - (addr + Size4KiB::SIZE) % Size4KiB::SIZE
+    }
+}
+
 // TODO: create dynamic alloc
 #[derive(Default)]
-pub struct IdentityPageTableAllocator;
+pub struct DynamicFrameAllocator;
 
-unsafe impl FrameAllocator<Size4KiB> for IdentityPageTableAllocator {
+unsafe impl FrameAllocator<Size4KiB> for DynamicFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        /*
-        PRESENT | WRITABLE | USER_ACCESSIBLE
-        if present in the PageTableFlags.
-        Depending on the used mapper implementation
-        the PRESENT and WRITABLE flags might be set for parent tables,
-        even if they are not set in PageTableFlags.
-        */
-        /*
-        let mut allocated_frame = 0u64;
-        let status = (boot_services().allocate_pages)(
-            ALLOCATE_ANY_PAGES,    // TODO: ?
-            CONVENTIONAL_MEMORY, // TODO: ? BOOT_SERVICES_DATA
-            Size4KiB::SIZE as usize,
-            &mut allocated_frame as *mut _,
-        );
-        */
-        let mut allocated_frame = 0u64;
-        let status = (boot_services().allocate_pages)(
-            ALLOCATE_ADDRESS,
+        let mut addr = core::ptr::null_mut();
+        let status = (boot_services().allocate_pool)(
             LOADER_DATA,
-            Size4KiB::SIZE as usize,
-            &mut allocated_frame as *mut _,
+            2 * Size4KiB::SIZE as usize,
+            &mut addr as *mut *mut _ as *mut *mut _,
         );
         if status == efi::Status::SUCCESS {
-            // TODO: not page aligned
-            Some(unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::new(allocated_frame)) })
+            let addr = addr as u64;
+            let aligned_addr = align_addr_forward(addr);
+            info!("allocated frame2: {:x}", aligned_addr);
+            PhysFrame::from_start_address(PhysAddr::new(aligned_addr)).ok()
         } else {
-            //info!("frame allocation failed {:x}", status.as_usize());
+            info!("frame allocation2 failed {:x}", status.as_usize());
             None
         }
     }

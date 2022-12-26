@@ -173,9 +173,9 @@ fn test_phys_read() {
     info!("switching to cr3 for identity map: {:?}", dtb);
     unsafe { Cr3::write(dtb, old_cr3.1) };
 
-    unsafe { core::ptr::copy_nonoverlapping(0x1000 as *mut u8, PAGE_BUFFER2.as_mut_ptr(), 0x1000) };
+    unsafe { core::ptr::copy_nonoverlapping(0 as *mut u8, PAGE_BUFFER2.as_mut_ptr(), 0x1000) };
 
-    info!("switching cr3 to original: {:?}", old_cr3.0);
+    info!("switching to original cr3: {:?}", old_cr3.0);
     unsafe { Cr3::write(old_cr3.0, old_cr3.1) };
 
     unsafe {
@@ -211,6 +211,7 @@ pub extern "C" fn main(
         }
         Err(err) => {
             error!("unable to create identity mapping: {}", err);
+            return efi::Status::ABORTED;
         }
     }
 
