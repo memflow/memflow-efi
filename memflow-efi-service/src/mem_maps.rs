@@ -1,3 +1,5 @@
+use core::slice::Iter;
+
 use ::alloc::{string::String, vec::Vec};
 use ::r_efi::{
     protocols::file::ProtocolOpen,
@@ -7,9 +9,11 @@ use ::r_efi::{
     *,
 };
 use alloc::format;
+use r_efi::system::LOADER_DATA;
 
 /// Reads and stores the memory mappings returned by EFI boot services
 pub struct EfiMemMaps {
+    // staticalloy allocate memory in binary
     mem_maps: [MemoryDescriptor; 1024],
     num_mem_maps: usize,
 }
@@ -60,7 +64,7 @@ impl EfiMemMaps {
         // allocate required buffer and convert it into a slice
         let mut mem_maps_ptr = core::ptr::null_mut();
         let status = (boot_services.allocate_pool)(
-            2, /* EfiLoaderData */
+            LOADER_DATA,
             mem_maps_size,
             &mut mem_maps_ptr as *mut *mut _ as *mut *mut _,
         );
@@ -84,7 +88,7 @@ impl EfiMemMaps {
         //let mut mem_maps = Vec::new();
 
         let num_mem_maps = mem_maps_size / descriptor_size;
-        info!("found a total of {} mem_maps:", num_mem_maps);
+        info!("found a total of {} mem_maps.", num_mem_maps);
         if self.num_mem_maps > 1024 {
             return Err(format!(
                 "found {} memory maps, out of memory.",
@@ -95,13 +99,13 @@ impl EfiMemMaps {
 
         let mut mem_map: &mut MemoryDescriptor = unsafe { core::mem::transmute(mem_maps_ptr) };
         for i in 0..num_mem_maps {
-            info!(
-                "map: type={:x}; vstart={:x}; pstart={:x}, pagecnt={:x}",
+            /*debug!(
+                "memory_map: type={:x}; vstart={:x}; pstart={:x}, pagecnt={:x}",
                 mem_map.r#type,
                 mem_map.virtual_start,
                 mem_map.physical_start,
                 mem_map.number_of_pages
-            );
+            );*/
             self.mem_maps[i].r#type = mem_map.r#type;
             self.mem_maps[i].virtual_start = mem_map.virtual_start;
             self.mem_maps[i].physical_start = mem_map.physical_start;
@@ -129,8 +133,8 @@ impl EfiMemMaps {
     pub fn is_mapped(&self, base_addr: u64) -> bool {
         for i in 0..self.num_mem_maps {
             let mem_map = &self.mem_maps[i];
-            if mem_map.r#type == 7 &&
-            mem_map.physical_start <= base_addr
+            if mem_map.r#type == 7
+                && mem_map.physical_start <= base_addr
                 && base_addr < mem_map.physical_start + mem_map.number_of_pages * 0x1000
             /* TODO: */
             {
@@ -138,6 +142,10 @@ impl EfiMemMaps {
             }
         }
         false
+    }
+
+    pub fn iter(&self) -> Iter<MemoryDescriptor> {
+        self.mem_maps[0..self.num_mem_maps].iter()
     }
 }
 

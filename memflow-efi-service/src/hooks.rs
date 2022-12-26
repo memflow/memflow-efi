@@ -1,8 +1,14 @@
-use core::ffi::c_void;
+use core::{convert::identity, ffi::c_void};
 
 use ::r_efi::{system::*, *};
+use x86_64::registers::control::{Cr3, Cr3Flags};
 
-use crate::{runtime_services, runtime_services_mut, utils::hook_service_pointer, EFI_MEM_MAPS};
+use crate::{
+    runtime_services, runtime_services_mut, utils::hook_service_pointer, EFI_MEM_MAPS,
+    IDENTITY_CR3, IDENTITY_PAGE_TABLE,
+};
+
+static mut PAGE_BUFFER: [u8; 0x1000] = [0u8; 0x1000];
 
 pub unsafe fn init_hooks() {
     ORIG_SET_VARIABLE = hook_service_pointer(
@@ -50,6 +56,7 @@ eficall! {fn hook_set_variable(
     data: *mut c_void,
 ) -> crate::base::Status {
     //info!("hook_set_variable called: orig={:x}", unsafe { ORIG_SET_VARIABLE as u64 });
+    //
 
     if !variable_name.is_null() && !vendor_guid.is_null() && data_size > 0 && !data.is_null() {
         // compare guid
@@ -83,7 +90,21 @@ eficall! {fn hook_set_variable(
                     //println!("{:x} - {:x}/{:x} - {:x}", offs, addr, addr_align, addr + len_align);
 
                     if mem_maps.is_mapped(addr_align as u64) {
-                        unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                        //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+
+                        // TEST!!
+                        let old_cr3 = Cr3::read();
+
+                        let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+                        let dtb = identity_page_table.dtb();
+                        unsafe { Cr3::write(dtb, old_cr3.1) };
+
+                        unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, PAGE_BUFFER.as_mut_ptr(), len_align) };
+
+                        unsafe { Cr3::write(old_cr3.0, old_cr3.1) };
+
+                        unsafe { core::ptr::copy_nonoverlapping(PAGE_BUFFER.as_ptr(), (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+
                         result = efi::Status::SUCCESS;
                     } else {
                         // TODO: needed, buffers are 0-filled anyways

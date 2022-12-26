@@ -8,9 +8,11 @@ extern crate alloc;
 #[macro_use]
 mod logger;
 mod hooks;
+mod identity_page_table;
 mod mem_maps;
 mod utils;
 
+use core::arch::asm;
 use core::borrow::BorrowMut;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
@@ -21,12 +23,24 @@ use ::r_efi::{
     system::{RuntimeSetVariable, TPL_HIGH_LEVEL},
     *,
 };
+use identity_page_table::IdentityPageTable;
 use mem_maps::EfiMemMaps;
 use r_efi::{protocols::file::ProtocolOpen, system::MemoryDescriptor};
+
+use x86_64::{
+    addr::PhysAddr,
+    registers::{
+        self,
+        control::{Cr3, Cr3Flags},
+    },
+    structures::paging::PhysFrame,
+};
 
 // system table
 static mut SYSTEM_TABLE: MaybeUninit<efi::SystemTable> = MaybeUninit::uninit();
 static mut EFI_MEM_MAPS: EfiMemMaps = EfiMemMaps::new();
+static mut IDENTITY_CR3: Option<(PhysFrame, Cr3Flags)> = None;
+static mut IDENTITY_PAGE_TABLE: IdentityPageTable = IdentityPageTable::new();
 
 pub fn system_table() -> &'static efi::SystemTable {
     unsafe { &*SYSTEM_TABLE.as_ptr() }
@@ -50,6 +64,24 @@ pub fn boot_services() -> &'static efi::BootServices {
 
 eficall! {fn handle_exit_boot_services(mut event: base::Event, _context: *mut c_void) {
     info!("handle_exit_boot_services called");
+
+    // retrieve latest mem maps
+    let mem_maps = unsafe { &mut EFI_MEM_MAPS };
+    match mem_maps.load_maps(boot_services()) {
+        Ok(_) => {
+            info!("retrieved a total of {} mem_maps", mem_maps.len());
+        }
+        Err(err) => {
+            error!("mem_maps could not be retrieved: {}", err);
+        }
+    }
+
+    // TODO: create custom pagetable
+
+    // retrieve cr3
+    unsafe { IDENTITY_CR3 = Some(Cr3::read()) };
+    info!("efi identity cr3: {:?}", unsafe { IDENTITY_CR3 });
+
     event = core::ptr::null_mut();
 }
 }
@@ -73,6 +105,9 @@ eficall! {fn handle_set_virtual_address_map(mut event: base::Event, _context: *m
         // info!("convert pointer: prev_port={:x}; new_port={:x}", prev_port, &logger::PORT as *const _ as usize);
     }
 
+    // cr3 of ntoskrnl
+    info!("kernel cr3: {:?}", Cr3::read());
+
     event = core::ptr::null_mut();
 }
 }
@@ -86,7 +121,7 @@ eficall! {fn efi_unload(
 
 fn init_dummy_protocol(image_handle: efi::Handle) -> efi::Status {
     let mut loaded_image: *mut loaded_image::Protocol = core::ptr::null_mut();
-    let mut status = (boot_services().open_protocol)(
+    let status = (boot_services().open_protocol)(
         image_handle,
         &mut loaded_image::PROTOCOL_GUID as *mut _,
         &mut loaded_image as *mut _ as *mut *mut _,
@@ -128,6 +163,26 @@ fn init_dummy_protocol(image_handle: efi::Handle) -> efi::Status {
     */
 }
 
+static mut PAGE_BUFFER2: [u8; 0x1000] = [0u8; 0x1000];
+fn test_phys_read() {
+    let old_cr3 = Cr3::read();
+
+    let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+    let dtb = identity_page_table.dtb();
+
+    info!("switching to cr3 for identity map: {:?}", dtb);
+    unsafe { Cr3::write(dtb, old_cr3.1) };
+
+    unsafe { core::ptr::copy_nonoverlapping(0x1000 as *mut u8, PAGE_BUFFER2.as_mut_ptr(), 0x1000) };
+
+    info!("switching cr3 to original: {:?}", old_cr3.0);
+    unsafe { Cr3::write(old_cr3.0, old_cr3.1) };
+
+    unsafe {
+        info!("data={:X?}", PAGE_BUFFER2);
+    }
+}
+
 #[export_name = "efi_main"]
 pub extern "C" fn main(
     image_handle: efi::Handle,
@@ -146,17 +201,20 @@ pub extern "C" fn main(
 
     init_dummy_protocol(image_handle);
 
-    // retrieve mem maps
+    // TODO: move to exit boot
     let mem_maps = unsafe { &mut EFI_MEM_MAPS };
-    match mem_maps.load_maps(boot_services()) {
+    mem_maps.load_maps(boot_services()); // TODO: temp
+    let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+    match identity_page_table.create_identity_mapping(mem_maps) {
         Ok(_) => {
-            info!("retrieved a total of {} mem_maps", mem_maps.len());
+            info!("identity mapping created at: {}", 0);
         }
         Err(err) => {
-            error!("mem_maps could not be retrieved, exiting...");
-            return efi::Status::DEVICE_ERROR;
+            error!("unable to create identity mapping: {}", err);
         }
     }
+
+    test_phys_read();
 
     // Register to events relevant for runtime drivers.
     let mut event_virtual_address: base::Event = core::ptr::null_mut();
