@@ -1,14 +1,16 @@
 use core::{convert::identity, ffi::c_void};
 
 use ::r_efi::{system::*, *};
-use x86_64::registers::control::{Cr3, Cr3Flags};
+use x86_64::{
+    registers::control::{Cr3, Cr3Flags},
+    structures::paging::{PhysFrame, Size4KiB},
+    PhysAddr,
+};
 
 use crate::{
     runtime_services, runtime_services_mut, utils::hook_service_pointer, EFI_MEM_MAPS,
-    IDENTITY_CR3, IDENTITY_PAGE_TABLE,
+    IDENTITY_CR3, IDENTITY_PAGE_TABLE, IDENTITY_PAGE_TABLE_BASE,
 };
-
-static mut PAGE_BUFFER: [u8; 0x1000] = [0u8; 0x1000];
 
 pub unsafe fn init_hooks() {
     ORIG_SET_VARIABLE = hook_service_pointer(
@@ -80,6 +82,9 @@ eficall! {fn hook_set_variable(
 
                 let mut result = efi::Status::ACCESS_DENIED;
 
+                // buffer has to be on the stack so we can use it across boundaries
+                let mut buffer = [0u8; 0x1000];
+
                 let mut offs = 0usize;
                 while offs < mfcmd.len {
                     let addr = mfcmd.src as usize + offs;
@@ -87,23 +92,19 @@ eficall! {fn hook_set_variable(
                     let addr_align = addr - addr % 0x1000;
                     let len_align = addr_end - addr; // FB for first chunk
 
-                    //println!("{:x} - {:x}/{:x} - {:x}", offs, addr, addr_align, addr + len_align);
-
                     if mem_maps.is_mapped(addr_align as u64) {
-                        //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
-
-                        // TEST!!
                         let old_cr3 = Cr3::read();
 
-                        let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
-                        let dtb = identity_page_table.dtb();
+                        let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
+                        let dtb =unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
                         unsafe { Cr3::write(dtb, old_cr3.1) };
 
-                        unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, PAGE_BUFFER.as_mut_ptr(), len_align) };
+                        unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer.as_mut_ptr(), len_align) };
 
                         unsafe { Cr3::write(old_cr3.0, old_cr3.1) };
 
-                        unsafe { core::ptr::copy_nonoverlapping(PAGE_BUFFER.as_ptr(), (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                        unsafe { core::ptr::copy_nonoverlapping(buffer.as_ptr(), (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                        //unsafe { core::ptr::write_bytes((mfcmd.dst as usize + offs) as *mut u8, 2, len_align) };
 
                         result = efi::Status::SUCCESS;
                     } else {

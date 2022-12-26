@@ -41,6 +41,7 @@ static mut SYSTEM_TABLE: MaybeUninit<efi::SystemTable> = MaybeUninit::uninit();
 static mut EFI_MEM_MAPS: EfiMemMaps = EfiMemMaps::new();
 static mut IDENTITY_CR3: Option<(PhysFrame, Cr3Flags)> = None;
 static mut IDENTITY_PAGE_TABLE: IdentityPageTable = IdentityPageTable::new();
+static mut IDENTITY_PAGE_TABLE_BASE: u64 = 0u64;
 
 pub fn system_table() -> &'static efi::SystemTable {
     unsafe { &*SYSTEM_TABLE.as_ptr() }
@@ -66,6 +67,7 @@ eficall! {fn handle_exit_boot_services(mut event: base::Event, _context: *mut c_
     info!("handle_exit_boot_services called");
 
     // retrieve latest mem maps
+    /*
     let mem_maps = unsafe { &mut EFI_MEM_MAPS };
     match mem_maps.load_maps(boot_services()) {
         Ok(_) => {
@@ -76,11 +78,21 @@ eficall! {fn handle_exit_boot_services(mut event: base::Event, _context: *mut c_
         }
     }
 
-    // TODO: create custom pagetable
+    // create custom identity mapped pagetable
+    let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+    match identity_page_table.create_identity_mapping(mem_maps) {
+        Ok(_) => {
+            info!("identity mapping created at: {}", 0);
+        }
+        Err(err) => {
+            error!("unable to create identity mapping: {}", err);
+        }
+    }
 
     // retrieve cr3
     unsafe { IDENTITY_CR3 = Some(Cr3::read()) };
     info!("efi identity cr3: {:?}", unsafe { IDENTITY_CR3 });
+    */
 
     event = core::ptr::null_mut();
 }
@@ -163,8 +175,9 @@ fn init_dummy_protocol(image_handle: efi::Handle) -> efi::Status {
     */
 }
 
-static mut PAGE_BUFFER2: [u8; 0x1000] = [0u8; 0x1000];
 fn test_phys_read() {
+    let mut buffer = [0u8; 0x1000];
+
     let old_cr3 = Cr3::read();
 
     let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
@@ -173,14 +186,12 @@ fn test_phys_read() {
     info!("switching to cr3 for identity map: {:?}", dtb);
     unsafe { Cr3::write(dtb, old_cr3.1) };
 
-    unsafe { core::ptr::copy_nonoverlapping(0 as *mut u8, PAGE_BUFFER2.as_mut_ptr(), 0x1000) };
+    unsafe { core::ptr::copy_nonoverlapping(0 as *mut u8, buffer.as_mut_ptr(), 0x1000) };
 
     info!("switching to original cr3: {:?}", old_cr3.0);
     unsafe { Cr3::write(old_cr3.0, old_cr3.1) };
 
-    unsafe {
-        info!("data={:X?}", PAGE_BUFFER2);
-    }
+    info!("data={:X?}", buffer);
 }
 
 #[export_name = "efi_main"]
@@ -214,7 +225,7 @@ pub extern "C" fn main(
             return efi::Status::ABORTED;
         }
     }
-
+    unsafe { IDENTITY_PAGE_TABLE_BASE = identity_page_table.dtb_addr() };
     test_phys_read();
 
     // Register to events relevant for runtime drivers.

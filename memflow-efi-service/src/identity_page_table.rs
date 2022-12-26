@@ -27,7 +27,7 @@ use crate::{boot_services, mem_maps::EfiMemMaps};
 
 pub struct IdentityPageTable {
     page_table: PageTable, // TODO: align?
-    allocator: StaticFrameAllocator<4096>,
+    allocator: StaticFrameAllocator<10000>,
 }
 
 impl IdentityPageTable {
@@ -40,7 +40,6 @@ impl IdentityPageTable {
 
     pub fn create_identity_mapping(&mut self, mem_maps: &EfiMemMaps) -> Result<(), String> {
         let mut pt_mapper = unsafe { OffsetPageTable::new(&mut self.page_table, VirtAddr::new(0)) };
-        //let mut pt_allocator = IdentityPageTableAllocator {};
 
         // loop through each page in each mapping and create new entries
         for mem_map in mem_maps.iter().filter(|m| m.r#type <= 7) {
@@ -132,8 +131,12 @@ impl IdentityPageTable {
         Ok(())
     }
 
+    pub fn dtb_addr(&self) -> u64 {
+        &self.page_table as *const _ as *const c_void as u64
+    }
+
     pub fn dtb(&self) -> PhysFrame {
-        let addr = &self.page_table as *const _ as *const c_void as u64;
+        let addr = self.dtb_addr();
         unsafe { PhysFrame::from_start_address_unchecked(PhysAddr::new(addr)) }
     }
 }
@@ -158,10 +161,8 @@ unsafe impl<const N: usize> FrameAllocator<Size4KiB> for StaticFrameAllocator<N>
             let addr = self.frames[self.used_frames].as_ptr() as u64;
             let aligned_addr = align_addr_forward(addr);
             self.used_frames += 1;
-            info!("allocated frame: {:x}", aligned_addr);
             PhysFrame::from_start_address(PhysAddr::new(aligned_addr)).ok()
         } else {
-            info!("all frames used");
             None
         }
     }
@@ -190,10 +191,8 @@ unsafe impl FrameAllocator<Size4KiB> for DynamicFrameAllocator {
         if status == efi::Status::SUCCESS {
             let addr = addr as u64;
             let aligned_addr = align_addr_forward(addr);
-            info!("allocated frame2: {:x}", aligned_addr);
             PhysFrame::from_start_address(PhysAddr::new(aligned_addr)).ok()
         } else {
-            info!("frame allocation2 failed {:x}", status.as_usize());
             None
         }
     }
