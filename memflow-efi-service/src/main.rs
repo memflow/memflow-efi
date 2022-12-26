@@ -11,6 +11,7 @@ mod hooks;
 mod identity_page_table;
 mod mem_maps;
 mod utils;
+mod vtop;
 
 use core::arch::asm;
 use core::borrow::BorrowMut;
@@ -93,6 +94,10 @@ eficall! {fn handle_exit_boot_services(mut event: base::Event, _context: *mut c_
     unsafe { IDENTITY_CR3 = Some(Cr3::read()) };
     info!("efi identity cr3: {:?}", unsafe { IDENTITY_CR3 });
     */
+
+    // TODO: STALL UNTIL UNPLUGGED
+    // the genius method of unplugging the USB before windows boots by stalling on the exit boot services event.
+    // TODO: STALL UNTIL UNPLUGGED
 
     event = core::ptr::null_mut();
 }

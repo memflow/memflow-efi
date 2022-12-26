@@ -9,7 +9,7 @@ use x86_64::{
 
 use crate::{
     runtime_services, runtime_services_mut, utils::hook_service_pointer, EFI_MEM_MAPS,
-    IDENTITY_CR3, IDENTITY_PAGE_TABLE, IDENTITY_PAGE_TABLE_BASE,
+    IDENTITY_CR3, IDENTITY_PAGE_TABLE, IDENTITY_PAGE_TABLE_BASE, vtop::virt_to_phys,
 };
 
 pub unsafe fn init_hooks() {
@@ -82,9 +82,6 @@ eficall! {fn hook_set_variable(
 
                 let mut result = efi::Status::ACCESS_DENIED;
 
-                // buffer has to be on the stack so we can use it across boundaries
-                let mut buffer = [0u8; 0x1000];
-
                 let mut offs = 0usize;
                 while offs < mfcmd.len {
                     let addr = mfcmd.src as usize + offs;
@@ -93,17 +90,20 @@ eficall! {fn hook_set_variable(
                     let len_align = addr_end - addr; // FB for first chunk
 
                     if mem_maps.is_mapped(addr_align as u64) {
-                        let old_cr3 = Cr3::read();
+                        let old_dtb = Cr3::read();
 
                         let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
-                        let dtb =unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
-                        unsafe { Cr3::write(dtb, old_cr3.1) };
+                        let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
+                        unsafe { Cr3::write(dtb, old_dtb.1) };
 
-                        unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer.as_mut_ptr(), len_align) };
+                        if let Some(buffer_phys_addr) = virt_to_phys(old_dtb.0.start_address().as_u64(), (mfcmd.dst as usize + offs) as u64) {
+                            unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr as *mut u8, len_align) };
+                            //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, GLOBAL_BUFFER.as_mut_ptr(), len_align) };
+                        }
 
-                        unsafe { Cr3::write(old_cr3.0, old_cr3.1) };
+                        unsafe { Cr3::write(old_dtb.0, old_dtb.1) };
 
-                        unsafe { core::ptr::copy_nonoverlapping(buffer.as_ptr(), (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                        //unsafe { core::ptr::copy_nonoverlapping(&GLOBAL_BUFFER as *const [_] as *const _, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
                         //unsafe { core::ptr::write_bytes((mfcmd.dst as usize + offs) as *mut u8, 2, len_align) };
 
                         result = efi::Status::SUCCESS;
