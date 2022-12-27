@@ -5,5 +5,4 @@ Memflow connector that utilizes an efi service (much like in the efi-memory proj
 ## Creating the Image
 
 Install prerequisites:
-- virt-make-fs (`pacman -S guestfs-tools`)
-- qemu-img (`pacman -S qemu`)
+- mkimg (`cargo install mkimg`)
