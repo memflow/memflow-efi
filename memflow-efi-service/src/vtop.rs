@@ -103,9 +103,7 @@ pub fn virt_to_phys(dtb: u64, addr: u64) -> Option<u64> {
         return Some(phys_addr);
     }
 
-    let pgd = read_pt_address(
-        (pdpte & make_bit_mask(12, 51)) | pd_index_bits!(addr),
-    );
+    let pgd = read_pt_address((pdpte & make_bit_mask(12, 51)) | pd_index_bits!(addr));
     if !check_entry!(pgd) {
         //return Err(Error::new("unable to read pgd"));
         return None;

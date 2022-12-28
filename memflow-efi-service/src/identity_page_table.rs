@@ -42,7 +42,8 @@ impl IdentityPageTable {
         let mut pt_mapper = unsafe { OffsetPageTable::new(&mut self.page_table, VirtAddr::new(0)) };
 
         // loop through each page in each mapping and create new entries
-        for mem_map in mem_maps.iter().filter(|m| m.r#type <= 7) {
+        for mem_map in mem_maps.iter() {
+            //.filter(|m| m.r#type <= 7) {
             let mut bytes_offset = 0;
             let mut bytes_left = mem_map.number_of_pages * Size4KiB::SIZE;
 
@@ -100,11 +101,8 @@ impl IdentityPageTable {
                 } else*/
                 {
                     match unsafe {
-                        pt_mapper.map_to(
-                            Page::<Size4KiB>::from_start_address_unchecked(VirtAddr::new(
-                                mem_map.physical_start + bytes_offset,
-                            )),
-                            PhysFrame::from_start_address_unchecked(PhysAddr::new(
+                        pt_mapper.identity_map(
+                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(
                                 mem_map.physical_start + bytes_offset,
                             )),
                             flags,
@@ -128,6 +126,13 @@ impl IdentityPageTable {
             }
         }
 
+        Ok(())
+    }
+
+    // copies high mem pml4 entries from the given dtb
+    pub fn copy_pml4_entries(&mut self, dtb: u64) -> Result<(), String> {
+        let page_table_ptr = &mut self.page_table as *mut _ as *mut c_void as u64;
+        unsafe { core::ptr::copy_nonoverlapping((dtb + 8 * 256) as *mut u8, (page_table_ptr + 8 * 256) as *mut u8, 8 * 256) };
         Ok(())
     }
 

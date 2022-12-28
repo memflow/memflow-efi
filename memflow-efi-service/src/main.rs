@@ -123,7 +123,41 @@ eficall! {fn handle_set_virtual_address_map(mut event: base::Event, _context: *m
     }
 
     // cr3 of ntoskrnl
-    info!("kernel cr3: {:?}", Cr3::read());
+    let kernel_dtb = Cr3::read();
+    info!("kernel cr3: {:?}", kernel_dtb);
+
+    let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+    let dtb = identity_page_table.dtb();
+
+    info!("switching to cr3 for identity map: {:?}", dtb);
+    unsafe { Cr3::write(dtb, kernel_dtb.1) };
+
+    identity_page_table.copy_pml4_entries(kernel_dtb.0.start_address().as_u64());
+
+    test_phys_read();
+
+    info!("switching to original cr3: {:?}", kernel_dtb.0);
+    unsafe { Cr3::write(kernel_dtb.0, kernel_dtb.1) };
+
+    /*
+    let kernel_dtb = Cr3::read();
+    info!("kernel cr3: {:?}", kernel_dtb);
+
+    let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+    identity_page_table.copy_pml4_entries(kernel_dtb.0.start_address().as_u64());
+
+    let mem_maps = unsafe { &mut EFI_MEM_MAPS };
+    match identity_page_table.create_identity_mapping(mem_maps) {
+        Ok(_) => {
+            info!("identity mapping created at: {}", 0);
+        }
+        Err(err) => {
+            error!("unable to create identity mapping: {}", err);
+        }
+    }
+    unsafe { IDENTITY_PAGE_TABLE_BASE = identity_page_table.dtb_addr() };
+    test_phys_read();
+    */
 
     event = core::ptr::null_mut();
 }
@@ -231,7 +265,7 @@ pub extern "C" fn main(
         }
     }
     unsafe { IDENTITY_PAGE_TABLE_BASE = identity_page_table.dtb_addr() };
-    test_phys_read();
+    //test_phys_read();
 
     // Register to events relevant for runtime drivers.
     let mut event_virtual_address: base::Event = core::ptr::null_mut();
