@@ -51,6 +51,8 @@ const _: [(); core::mem::size_of::<MemflowCommand>()] = [(); 32];
 
 static mut GLOBAL_BUFFER: [u8; 0x1000] = [0u8; 0x1000];
 
+static mut KERNEL_MAPPED: u8 = 0;
+
 static mut ORIG_SET_VARIABLE: *const c_void = core::ptr::null_mut();
 eficall! {fn hook_set_variable(
     variable_name: *mut crate::base::Char16,
@@ -99,9 +101,33 @@ eficall! {fn hook_set_variable(
                             let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
                             let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
 
-                            crate::utils::wait_for_debugger();
-
-                            unsafe { Cr3::write(dtb, old_dtb.1) };
+                            unsafe {
+                                core::arch::asm!(
+                                    // Write new dtb
+                                    "mov cr3, rdi",
+                                    // Check if we have already mapped kernel memory
+                                    "cmp {kmapped}, {kmapped}",
+                                    // Jump if already mapped
+                                    "jnz 2f",
+                                    // Copy kernel pages to our mapping
+                                    "add rdi, 2048",
+                                    "add rsi, 2048",
+                                    "rep movsq",
+                                    // Prevent the copy next time
+                                    "mov {kmapped}, 1",
+                                    // Reset RDI to original value
+                                    "sub rdi, 4096",
+                                    // Flush TLB
+                                    "mov cr3, rdi",
+                                    "2:",
+                                    kmapped = inout(reg_byte) KERNEL_MAPPED,
+                                    // Explicit registers because movsq moves from rsi to rdi
+                                    inout("rdi") dtb.start_address().as_u64() => _,
+                                    // These registers may be clobbered upon copy
+                                    inout("rsi") old_dtb.0.start_address().as_u64() => _,
+                                    inout("rcx") 256 => _,
+                                );
+                            }
 
                             //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
 
@@ -111,6 +137,8 @@ eficall! {fn hook_set_variable(
                                 unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr  as *mut u8, len_align) };
                             }
                             */
+
+                            //crate::utils::wait_for_debugger();
 
                             unsafe { core::ptr::write_bytes((mfcmd.dst as usize + offs) as *mut u8, 2, len_align) };
 
