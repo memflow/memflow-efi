@@ -106,7 +106,7 @@ eficall! {fn handle_exit_boot_services(mut event: base::Event, _context: *mut c_
 fn convert_pointer<T>(mut p: *mut T) -> Option<*mut T> {
     match (runtime_services().convert_pointer)(0, &mut p as *mut _ as *mut *mut _) {
         efi::Status::SUCCESS => Some(p),
-        _ => None
+        _ => None,
     }
 }
 
@@ -127,22 +127,29 @@ eficall! {fn handle_set_virtual_address_map(mut event: base::Event, _context: *m
         // info!("convert pointer: prev_port={:x}; new_port={:x}", prev_port, &logger::PORT as *const _ as usize);
     }
 
-    // cr3 of ntoskrnl
-    let kernel_dtb = Cr3::read();
-    info!("kernel cr3: {:?}", kernel_dtb);
+    // Map our image into
+    if let Some(image) = unsafe { LOADED_IMAGE.as_ref() } {
+        let new_base = convert_pointer(image.image_base).unwrap();
+        let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+        identity_page_table.map_to_virt(image.image_base as u64, new_base as u64, image.image_size as u64).unwrap();
+    }
 
-    let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
-    let dtb = identity_page_table.dtb();
+    //// cr3 of ntoskrnl
+    //let kernel_dtb = Cr3::read();
+    //info!("kernel cr3: {:?}", kernel_dtb);
 
-    info!("switching to cr3 for identity map: {:?}", dtb);
-    unsafe { Cr3::write(dtb, kernel_dtb.1) };
+    //let identity_page_table = unsafe { &mut IDENTITY_PAGE_TABLE };
+    //let dtb = identity_page_table.dtb();
 
-    identity_page_table.copy_pml4_entries(kernel_dtb.0.start_address().as_u64());
+    //info!("switching to cr3 for identity map: {:?}", dtb);
+    //unsafe { Cr3::write(dtb, kernel_dtb.1) };
 
-    test_phys_read();
+    //identity_page_table.copy_pml4_entries(kernel_dtb.0.start_address().as_u64());
 
-    info!("switching to original cr3: {:?}", kernel_dtb.0);
-    unsafe { Cr3::write(kernel_dtb.0, kernel_dtb.1) };
+    //test_phys_read();
+
+    //info!("switching to original cr3: {:?}", kernel_dtb.0);
+    //unsafe { Cr3::write(kernel_dtb.0, kernel_dtb.1) };
 
     /*
     let kernel_dtb = Cr3::read();
@@ -175,12 +182,13 @@ eficall! {fn efi_unload(
     efi::Status::ACCESS_DENIED
 }}
 
+static mut LOADED_IMAGE: *mut loaded_image::Protocol = core::ptr::null_mut();
+
 fn init_dummy_protocol(image_handle: efi::Handle) -> efi::Status {
-    let mut loaded_image: *mut loaded_image::Protocol = core::ptr::null_mut();
     let status = (boot_services().open_protocol)(
         image_handle,
         &mut loaded_image::PROTOCOL_GUID as *mut _,
-        &mut loaded_image as *mut _ as *mut *mut _,
+        unsafe { &mut LOADED_IMAGE } as *mut _ as *mut *mut _,
         image_handle,
         core::ptr::null_mut(),
         efi::OPEN_PROTOCOL_GET_PROTOCOL,
@@ -195,7 +203,7 @@ fn init_dummy_protocol(image_handle: efi::Handle) -> efi::Status {
 
     // create protocol?
 
-    unsafe { (&mut *loaded_image).unload = efi_unload };
+    unsafe { (&mut *LOADED_IMAGE).unload = efi_unload };
 
     efi::Status::SUCCESS
 

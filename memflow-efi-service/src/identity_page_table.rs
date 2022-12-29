@@ -25,6 +25,7 @@ use x86_64::{
 
 use crate::{boot_services, mem_maps::EfiMemMaps};
 
+#[repr(align(4096))]
 pub struct IdentityPageTable {
     page_table: PageTable, // TODO: align?
     allocator: StaticFrameAllocator<10000>,
@@ -36,6 +37,48 @@ impl IdentityPageTable {
             page_table: PageTable::new(),
             allocator: StaticFrameAllocator::new(),
         }
+    }
+
+    pub fn map_to_virt(&mut self, phys: u64, virt: u64, size: u64) -> Result<(), &'static str> {
+        let mut remap_off = virt - phys;
+
+        let mut pt_mapper = unsafe { OffsetPageTable::new(&mut self.page_table, VirtAddr::new(0)) };
+
+        type Alignment = Size4KiB;
+
+        let alignment = Alignment::SIZE;
+        let alignment_mask = alignment - 1;
+
+        let start = phys & !alignment_mask;
+        let end = (phys + size + alignment_mask) & !alignment_mask;
+
+        if (remap_off & alignment_mask) != 0 {
+            return Err("Incompatible alignment");
+        }
+
+        info!("{start:x}-{end:x}");
+        for addr in (start..end).step_by(alignment as usize) {
+            match unsafe {
+                pt_mapper.map_to(
+                    Page::<Alignment>::from_start_address_unchecked(VirtAddr::new(
+                        addr + remap_off,
+                    )),
+                    PhysFrame::from_start_address_unchecked(PhysAddr::new(addr)),
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+                    &mut self.allocator,
+                )
+            } {
+                Ok(_) => debug!(
+                    "4kb page table entry for address {:x} created on {addr:x}",
+                    addr + remap_off
+                ),
+                Err(err) => {
+                    error!("could not add 4kb page_table entry, {err:?}");
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn create_identity_mapping(&mut self, mem_maps: &EfiMemMaps) -> Result<(), String> {
@@ -132,7 +175,13 @@ impl IdentityPageTable {
     // copies high mem pml4 entries from the given dtb
     pub fn copy_pml4_entries(&mut self, dtb: u64) -> Result<(), String> {
         let page_table_ptr = &mut self.page_table as *mut _ as *mut c_void as u64;
-        unsafe { core::ptr::copy_nonoverlapping((dtb + 8 * 256) as *mut u8, (page_table_ptr + 8 * 256) as *mut u8, 8 * 256) };
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (dtb + 8 * 256) as *mut u8,
+                (page_table_ptr + 8 * 256) as *mut u8,
+                8 * 256,
+            )
+        };
         Ok(())
     }
 

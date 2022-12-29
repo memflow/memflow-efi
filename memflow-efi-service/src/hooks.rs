@@ -93,12 +93,14 @@ eficall! {fn hook_set_variable(
 
                     if mem_maps.is_mapped(addr_align as u64) {
                         x86_64::instructions::interrupts::without_interrupts(|| {
-                            crate::utils::wait_for_debugger();
 
                             let old_dtb = Cr3::read();
 
                             let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
                             let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
+
+                            crate::utils::wait_for_debugger();
+
                             unsafe { Cr3::write(dtb, old_dtb.1) };
 
                             //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };

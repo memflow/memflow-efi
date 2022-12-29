@@ -39,58 +39,44 @@ impl fmt::Write for Serial {
 }
 
 macro_rules! log {
-    ($($arg:tt)*) => {{
+    ($loglevel:expr, $($arg:tt)*) => {{
         use core::fmt::Write;
+        write!(crate::logger::Serial, "{:5} - ", $loglevel).unwrap();
         writeln!(crate::logger::Serial, $($arg)*).unwrap();
     }};
 }
 
 #[macro_export]
 macro_rules! debug {
-    ($format:expr) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Debug);
-    );
-    ($format:expr, $($args:tt)*) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Debug, $($args)*);
+    ($($args:tt)*) => (
+        log!($crate::logger::LogLevel::Debug, $($args)*);
     )
 }
 
 #[macro_export]
 macro_rules! warn {
-    ($format:expr) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Warn);
-    );
-    ($format:expr, $($args:tt)*) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Warn, $($args)*);
+    ($($args:tt)*) => (
+        log!($crate::logger::LogLevel::Warn, $($args)*);
     )
 }
 
 #[macro_export]
 macro_rules! info {
-    ($format:expr) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Info);
-    );
-    ($format:expr, $($args:tt)*) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Info, $($args)*);
+    ($($args:tt)*) => (
+        log!($crate::logger::LogLevel::Info, $($args)*);
     )
 }
 
 #[macro_export]
 macro_rules! error {
-    ($format:expr) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Error);
-    );
-    ($format:expr, $($args:tt)*) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Error, $($args)*);
+    ($($args:tt)*) => (
+        log!($crate::logger::LogLevel::Error, $($args)*);
     )
 }
 
 #[macro_export]
 macro_rules! trace {
-    ($format:expr) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Trace);
-    );
-    ($format:expr, $($args:tt)*) => (
-        log!(concat!("{:5} - ", $format), $crate::logger::LogLevel::Trace, $($args)*);
+    ($($args:tt)*) => (
+        log!($crate::logger::LogLevel::Trace, $($args)*);
     )
 }
