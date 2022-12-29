@@ -8,11 +8,13 @@ use ::r_efi::system::{RuntimeSetVariable, TPL_HIGH_LEVEL};
 
 use crate::{boot_services, error, system_table_mut};
 
+#[no_mangle]
 static mut GDB_ATTACHED: bool = false;
 
 pub fn wait_for_debugger() {
     unsafe {
-        while !GDB_ATTACHED {
+        GDB_ATTACHED = false;
+        while !core::ptr::read_volatile(&GDB_ATTACHED) {
             core::arch::asm!("pause");
         }
     }

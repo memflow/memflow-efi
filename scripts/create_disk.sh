@@ -1,11 +1,12 @@
 #!/bin/sh
 if [ -z "$1" ]; then
-    profile="debug"
-else
     profile="release"
+else
+    profile="debug"
 fi;
 
-mkdir -p _efi/EFI/Boot/
-cp Shell.efi _efi/EFI/Boot/Bootx64.efi
+rm -rf _efi
+mkdir -p _efi/
 cp ../target/x86_64-unknown-uefi/$profile/memflow-efi-service.efi _efi/memflow.efi
-mkimg -i _efi -o efi.raw
+cp -r efi_include/* _efi/
+mkimg -i _efi -p gpt -o efi.raw

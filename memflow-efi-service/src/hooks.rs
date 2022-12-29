@@ -92,26 +92,30 @@ eficall! {fn hook_set_variable(
                     let len_align = addr_end - addr; // FB for first chunk
 
                     if mem_maps.is_mapped(addr_align as u64) {
-                        let old_dtb = Cr3::read();
+                        x86_64::instructions::interrupts::without_interrupts(|| {
+                            crate::utils::wait_for_debugger();
 
-                        let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
-                        let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
-                        unsafe { Cr3::write(dtb, old_dtb.1) };
+                            let old_dtb = Cr3::read();
 
-                        //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                            let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
+                            let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
+                            unsafe { Cr3::write(dtb, old_dtb.1) };
 
-                        /*
-                        if let Some(buffer_phys_addr) = virt_to_phys(old_dtb.0.start_address().as_u64(), (mfcmd.dst as usize + offs) as u64) {
-                            //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr as *mut u8, len_align) };
-                            unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr  as *mut u8, len_align) };
-                        }
-                        */
+                            //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
 
-unsafe { core::ptr::write_bytes((mfcmd.dst as usize + offs) as *mut u8, 2, len_align) };
+                            /*
+                            if let Some(buffer_phys_addr) = virt_to_phys(old_dtb.0.start_address().as_u64(), (mfcmd.dst as usize + offs) as u64) {
+                                //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr as *mut u8, len_align) };
+                                unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr  as *mut u8, len_align) };
+                            }
+                            */
 
-                        unsafe { Cr3::write(old_dtb.0, old_dtb.1) };
+                            unsafe { core::ptr::write_bytes((mfcmd.dst as usize + offs) as *mut u8, 2, len_align) };
 
-//                        unsafe { core::ptr::copy_nonoverlapping(global_buffer_addr, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                            unsafe { Cr3::write(old_dtb.0, old_dtb.1) };
+
+                            // unsafe { core::ptr::copy_nonoverlapping(global_buffer_addr, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+                        });
 
                         result = efi::Status::SUCCESS;
                     } else {

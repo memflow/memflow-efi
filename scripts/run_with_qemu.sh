@@ -10,10 +10,10 @@ fi
 
 # start qemu with an exposed serial console on port 9080
 qemu-system-x86_64 \
-	$QEMU_ARGS \
     -drive if=pflash,format=raw,readonly=on,file="${OVMF_PREFIX}/OVMF_CODE.fd" \
     -drive if=pflash,format=raw,readonly=on,file="${OVMF_PREFIX}/OVMF_VARS.fd" \
     -drive format=raw,file=efi.raw \
+    $QEMU_ARGS \
     -m 8G \
     -serial tcp::9080,server &
 

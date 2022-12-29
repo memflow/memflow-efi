@@ -1,7 +1,3 @@
 #!/bin/bash
-cd ../memflow-efi-service
-cargo +nightly build --release --target x86_64-unknown-uefi
-
-cd ../scripts
-./create_disk.sh release
-./run_with_qemu.sh
+./efi_build.sh "$1"
+./run_with_qemu.sh "$1"

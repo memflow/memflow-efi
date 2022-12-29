@@ -1,0 +1,3 @@
+file ../target/x86_64-unknown-uefi/debug/memflow-efi-service.efi
+target remote :1234
+source .gdbinit

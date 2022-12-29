@@ -103,19 +103,24 @@ eficall! {fn handle_exit_boot_services(mut event: base::Event, _context: *mut c_
 }
 }
 
+fn convert_pointer<T>(mut p: *mut T) -> Option<*mut T> {
+    match (runtime_services().convert_pointer)(0, &mut p as *mut _ as *mut *mut _) {
+        efi::Status::SUCCESS => Some(p),
+        _ => None
+    }
+}
+
 eficall! {fn handle_set_virtual_address_map(mut event: base::Event, _context: *mut c_void) {
     info!("handle_set_virtual_address_map called");
 
     unsafe {
         hooks::convert_hook_pointers();
 
-        let prev_system_table = SYSTEM_TABLE.as_mut_ptr() as usize;
-        (runtime_services().convert_pointer)(0, SYSTEM_TABLE.as_mut_ptr() as *mut *mut _);
-        info!("convert pointer: prev_system_table={:x}; new_system_table={:x}", prev_system_table, SYSTEM_TABLE.as_mut_ptr() as usize);
+        let new_system_table = convert_pointer(SYSTEM_TABLE.as_mut_ptr());
+        info!("convert pointer: prev_system_table={:?}; new_system_table={:?}", SYSTEM_TABLE.as_mut_ptr(), new_system_table);
 
-        let prev_ags = AGS.as_mut_ptr() as usize;
-        (runtime_services().convert_pointer)(0, AGS.as_mut_ptr() as *mut *mut _);
-        info!("convert pointer: prev_ags={:x}; new_ags={:x}", prev_ags, AGS.as_mut_ptr() as usize);
+        let new_ags = convert_pointer(AGS.as_mut_ptr());
+        info!("convert pointer: prev_ags={:?}; new_ags={:?}", AGS.as_mut_ptr(), new_ags);
 
         // let prev_port = &logger::PORT as *const _ as usize;
         // (runtime_services().convert_pointer)(0, &mut logger::PORT as *mut _ as *mut *mut _);

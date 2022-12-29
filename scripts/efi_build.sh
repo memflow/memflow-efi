@@ -1,6 +1,14 @@
 #!/bin/bash
 cd ../memflow-efi-service
-cargo build --release
+
+if [ -z "$1" ] || [ "$1" = "release" ]; then
+    profile="--release"
+fi
+
+cargo build $profile
+
+echo "$1"
+echo "$profile"
 
 cd ../scripts
-./create_disk.sh release
+./create_disk.sh "$1"
