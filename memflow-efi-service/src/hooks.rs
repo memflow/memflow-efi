@@ -70,8 +70,44 @@ eficall! {fn hook_set_variable(
         let guid = unsafe { &*vendor_guid };
         let target_guid = "cZ53x7dyxAVJRD19";
         if guid.as_bytes() == target_guid.as_bytes() {
+
             let mfcmd = unsafe { &*(data as *mut MemflowCommand) };
             if mfcmd.magic == 0x2b54a004 && !mfcmd.src.is_null() && !mfcmd.dst.is_null() && mfcmd.len > 0 {
+
+                let old_dtb = Cr3::read();
+
+                let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
+                let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
+
+                if unsafe { KERNEL_MAPPED == 0 } {
+                    unsafe {
+                        core::arch::asm!(
+                            // Write new dtb
+                            "mov cr3, rdi",
+                            // Copy kernel pages to our mapping
+                            "add rdi, 2048",
+                            "add rsi, 2048",
+                            "rep movsq",
+                            // Reset RDI to original value
+                            "sub rdi, 4096",
+                            // Flush TLB
+                            "mov cr3, rdi",
+                            // Explicit registers because movsq moves from rsi to rdi
+                            inout("rdi") dtb.start_address().as_u64() => _,
+                            // These registers may be clobbered upon copy
+                            inout("rsi") old_dtb.0.start_address().as_u64() => _,
+                            inout("rcx") 256 => _,
+                        );
+
+                        KERNEL_MAPPED = 1;
+                    }
+                } else {
+                    unsafe { Cr3::write(dtb, old_dtb.1) };
+                }
+
+                // Map user buffer into a free memory range
+
+
                 //let test = alloc::boxed::Box::new(133742usize);
                 //return efi::Status::from_usize(*test.as_ref());
 
@@ -96,38 +132,6 @@ eficall! {fn hook_set_variable(
                     if mem_maps.is_mapped(addr_align as u64) {
                         x86_64::instructions::interrupts::without_interrupts(|| {
 
-                            let old_dtb = Cr3::read();
-
-                            let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
-                            let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
-
-                            unsafe {
-                                core::arch::asm!(
-                                    // Write new dtb
-                                    "mov cr3, rdi",
-                                    // Check if we have already mapped kernel memory
-                                    "cmp {kmapped}, {kmapped}",
-                                    // Jump if already mapped
-                                    "jnz 2f",
-                                    // Copy kernel pages to our mapping
-                                    "add rdi, 2048",
-                                    "add rsi, 2048",
-                                    "rep movsq",
-                                    // Prevent the copy next time
-                                    "mov {kmapped}, 1",
-                                    // Reset RDI to original value
-                                    "sub rdi, 4096",
-                                    // Flush TLB
-                                    "mov cr3, rdi",
-                                    "2:",
-                                    kmapped = inout(reg_byte) KERNEL_MAPPED,
-                                    // Explicit registers because movsq moves from rsi to rdi
-                                    inout("rdi") dtb.start_address().as_u64() => _,
-                                    // These registers may be clobbered upon copy
-                                    inout("rsi") old_dtb.0.start_address().as_u64() => _,
-                                    inout("rcx") 256 => _,
-                                );
-                            }
 
                             //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
 

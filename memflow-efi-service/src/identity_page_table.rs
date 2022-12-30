@@ -19,6 +19,7 @@ use x86_64::{
         page::{PageSize, Size1GiB, Size2MiB, Size4KiB},
         page_table::{PageTable, PageTableFlags},
         FrameAllocator, PhysFrame, Translate,
+        FrameDeallocator,
     },
     PhysAddr, VirtAddr,
 };
@@ -195,30 +196,51 @@ impl IdentityPageTable {
     }
 }
 
+#[repr(align(4096))]
 pub struct StaticFrameAllocator<const N: usize> {
     frames: [[u8; 0x1000]; N],
-    used_frames: usize,
+    free_frames: usize,
+    free_frame_stack: [usize; N],
 }
 
 impl<const N: usize> StaticFrameAllocator<N> {
     pub const fn new() -> Self {
         Self {
             frames: [[0u8; 0x1000]; N],
-            used_frames: 0,
+            free_frame_stack: {
+                let mut cnt = 0;
+                let mut ret = [0; N];
+                while cnt < N {
+                    ret[cnt] = cnt;
+                    cnt += 1;
+                }
+                ret
+            },
+            free_frames: N,
         }
     }
 }
 
 unsafe impl<const N: usize> FrameAllocator<Size4KiB> for StaticFrameAllocator<N> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        if self.used_frames < self.frames.len() {
-            let addr = self.frames[self.used_frames].as_ptr() as u64;
-            let aligned_addr = align_addr_forward(addr);
-            self.used_frames += 1;
-            PhysFrame::from_start_address(PhysAddr::new(aligned_addr)).ok()
+        if self.free_frames > 0 {
+            self.free_frames -= 1;
+            let frame = self.free_frames;
+            let addr = self.frames[self.free_frame_stack[frame]].as_ptr() as u64;
+            PhysFrame::from_start_address(PhysAddr::new(addr)).ok()
         } else {
             None
         }
+    }
+}
+
+impl<const N: usize> FrameDeallocator<Size4KiB> for StaticFrameAllocator<N> {
+    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
+        debug_assert!(self.free_frames < N);
+        let off = frame.start_address().as_u64() - self.frames[0].as_ptr() as u64;
+        let idx = (off / Size4KiB::SIZE) as usize;
+        self.free_frame_stack[self.free_frames] = idx;
+        self.free_frames += 1;
     }
 }
 
