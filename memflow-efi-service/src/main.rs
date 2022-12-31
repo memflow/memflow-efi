@@ -251,8 +251,11 @@ pub extern "C" fn main(
     image_handle: efi::Handle,
     raw_system_table: *mut efi::SystemTable,
 ) -> efi::Status {
+    info!("enter main()");
+
     #[cfg(debug_assertions)]
     {
+        info!("Waiting for debugger");
         utils::wait_for_debugger();
     }
 

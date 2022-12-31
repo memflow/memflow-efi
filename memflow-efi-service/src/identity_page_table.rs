@@ -18,18 +18,111 @@ use x86_64::{
         mapper::Mapper,
         page::{PageSize, Size1GiB, Size2MiB, Size4KiB},
         page_table::{PageTable, PageTableFlags},
-        FrameAllocator, PhysFrame, Translate,
-        FrameDeallocator,
+        FrameAllocator, FrameDeallocator, PhysFrame, Translate,
     },
     PhysAddr, VirtAddr,
 };
 
 use crate::{boot_services, mem_maps::EfiMemMaps};
 
+const REMAP_SIZE: usize = (Size1GiB::SIZE as usize) << 9;
+const REMAP_ALIGN: usize = REMAP_SIZE - 1;
+
+use core::cell::UnsafeCell;
+use core::mem::{ManuallyDrop, MaybeUninit};
+use core::ops::{Deref, DerefMut};
+use core::sync::atomic::{AtomicIsize, Ordering};
+
+pub struct ConcurrentStaticVec<T, const N: usize> {
+    buf: UnsafeCell<MaybeUninit<[T; N]>>,
+    len: AtomicIsize,
+}
+
+impl<T, const N: usize> ConcurrentStaticVec<T, N> {
+    pub const fn new() -> Self {
+        Self {
+            buf: UnsafeCell::new(MaybeUninit::uninit()),
+            len: AtomicIsize::new(0),
+        }
+    }
+
+    pub const fn new_from_const_array(buf: [T; N]) -> Self {
+        Self {
+            buf: UnsafeCell::new(MaybeUninit::new(buf)),
+            len: AtomicIsize::new(N as isize),
+        }
+    }
+
+    pub fn push(&self, val: T) {
+        let idx = loop {
+            let idx = self.len.fetch_add(1, Ordering::Relaxed);
+            // Pop may decrement us into negatives, undo that
+            if idx >= 0 {
+                break idx as usize;
+            }
+        };
+        assert!(idx < N);
+        let cell = self.buf.get() as *mut [MaybeUninit<T>; N];
+        // Safety: index is incremented atomically, thus we have exclusive access
+        unsafe {
+            (*cell)[idx].write(val);
+        }
+    }
+
+    pub fn pop(&self) -> Option<T> {
+        let idx = self.len.fetch_sub(1, Ordering::Relaxed);
+        if idx <= 0 {
+            None
+        } else {
+            let idx = idx as usize - 1;
+            assert!(idx < N);
+            let cell = self.buf.get() as *mut [MaybeUninit<T>; N];
+            // Safety: index is decremented atomically, thus we have exclusive access.
+            // In addition, the prior code ensures that the value is initialized.
+            unsafe { Some((*cell)[idx].assume_init_read()) }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        core::cmp::max(self.len.load(Ordering::Relaxed), 0) as usize
+    }
+}
+
+pub struct DropPush<'a, T, const N: usize>(&'a ConcurrentStaticVec<T, N>, ManuallyDrop<T>);
+
+impl<'a, T, const N: usize> DropPush<'a, T, N> {
+    fn pop(vec: &'a ConcurrentStaticVec<T, N>) -> Option<Self> {
+        vec.pop().map(|elem| Self(vec, ManuallyDrop::new(elem)))
+    }
+}
+
+impl<'a, T, const N: usize> Deref for DropPush<'a, T, N> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.1
+    }
+}
+
+impl<'a, T, const N: usize> DerefMut for DropPush<'a, T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.1
+    }
+}
+
+impl<'a, T, const N: usize> Drop for DropPush<'a, T, N> {
+    fn drop(&mut self) {
+        // Safety: this is the only place where we take this value.
+        let value = unsafe { ManuallyDrop::take(&mut self.1) };
+        self.0.push(value);
+    }
+}
+
 #[repr(align(4096))]
 pub struct IdentityPageTable {
     page_table: PageTable, // TODO: align?
     allocator: StaticFrameAllocator<10000>,
+    free_virt_remaps: ConcurrentStaticVec<usize, 256>,
 }
 
 impl IdentityPageTable {
@@ -37,6 +130,7 @@ impl IdentityPageTable {
         Self {
             page_table: PageTable::new(),
             allocator: StaticFrameAllocator::new(),
+            free_virt_remaps: ConcurrentStaticVec::new(),
         }
     }
 
@@ -85,6 +179,8 @@ impl IdentityPageTable {
     pub fn create_identity_mapping(&mut self, mem_maps: &EfiMemMaps) -> Result<(), String> {
         let mut pt_mapper = unsafe { OffsetPageTable::new(&mut self.page_table, VirtAddr::new(0)) };
 
+        let mut largest_identity_mapping = 0;
+
         // loop through each page in each mapping and create new entries
         for mem_map in mem_maps.iter() {
             //.filter(|m| m.r#type <= 7) {
@@ -94,7 +190,10 @@ impl IdentityPageTable {
             let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 
             info!("bytes_left: {}", bytes_left);
+
             while bytes_left > 0 {
+                let map_addr = mem_map.physical_start + bytes_offset;
+
                 /*if bytes_left >= Size1GiB::SIZE {
                     match unsafe {
                         pt_mapper.map_to(
@@ -147,7 +246,7 @@ impl IdentityPageTable {
                     match unsafe {
                         pt_mapper.identity_map(
                             PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(
-                                mem_map.physical_start + bytes_offset,
+                                map_addr,
                             )),
                             flags,
                             &mut self.allocator,
@@ -166,11 +265,59 @@ impl IdentityPageTable {
 
                     bytes_offset += Size4KiB::SIZE;
                     bytes_left -= Size4KiB::SIZE;
+                    largest_identity_mapping =
+                        core::cmp::max(largest_identity_mapping, map_addr + Size4KiB::SIZE);
                 };
             }
         }
 
+        // Align largest mapping address to the next PML4 entry
+        let remap_pml4_id = (largest_identity_mapping as usize + REMAP_ALIGN) / REMAP_SIZE;
+
+        for i in remap_pml4_id..256 {
+            self.free_virt_remaps.push(i);
+        }
+
+        info!("Remappable entries: {}", self.free_virt_remaps.len());
+
         Ok(())
+    }
+
+    /// Remaps a virtual address range
+    ///
+    /// # Parameters
+    ///
+    /// * `virt_addr` - Virtual address to remap.
+    /// * `size` - Size of the virtual mapping.
+    /// * `from_cr3` - Virtual address space to remap from.
+    ///
+    /// # Returns
+    ///
+    /// `Some((handle, addr))` - remapped virtual address if successful.
+    ///
+    /// `None` if not successful. This can occur when there are no free PML4 entries left,
+    /// or whenever virtual address range overlaps multiple PML4 entries.
+    pub fn remap_range(
+        &mut self,
+        virt_addr: usize,
+        size: usize,
+        from_cr3: PhysFrame,
+    ) -> Option<(impl Drop + '_, usize)> {
+        if virt_addr & !REMAP_ALIGN != (virt_addr + size) & !REMAP_ALIGN {
+            return None;
+        }
+
+        let from_pml4_id = virt_addr & !REMAP_ALIGN;
+        let to_pml4_id = DropPush::pop(&self.free_virt_remaps)?;
+
+        let from_cr3 = from_cr3.start_address().as_u64() as *const PageTable;
+        // Safety: not very safe.
+        let entry = unsafe { (*from_cr3)[from_pml4_id].clone() };
+        self.page_table[*to_pml4_id] = entry;
+
+        let remapped_addr = (*to_pml4_id * REMAP_SIZE) + (virt_addr & !REMAP_ALIGN);
+
+        Some((to_pml4_id, remapped_addr))
     }
 
     // copies high mem pml4 entries from the given dtb
@@ -199,48 +346,44 @@ impl IdentityPageTable {
 #[repr(align(4096))]
 pub struct StaticFrameAllocator<const N: usize> {
     frames: [[u8; 0x1000]; N],
-    free_frames: usize,
-    free_frame_stack: [usize; N],
+    free_frames: ConcurrentStaticVec<usize, N>,
 }
 
 impl<const N: usize> StaticFrameAllocator<N> {
     pub const fn new() -> Self {
         Self {
             frames: [[0u8; 0x1000]; N],
-            free_frame_stack: {
+            free_frames: {
                 let mut cnt = 0;
                 let mut ret = [0; N];
                 while cnt < N {
                     ret[cnt] = cnt;
                     cnt += 1;
                 }
-                ret
+                ConcurrentStaticVec::new_from_const_array(ret)
             },
-            free_frames: N,
         }
     }
 }
 
 unsafe impl<const N: usize> FrameAllocator<Size4KiB> for StaticFrameAllocator<N> {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        if self.free_frames > 0 {
-            self.free_frames -= 1;
-            let frame = self.free_frames;
-            let addr = self.frames[self.free_frame_stack[frame]].as_ptr() as u64;
-            PhysFrame::from_start_address(PhysAddr::new(addr)).ok()
-        } else {
-            None
-        }
+        self.free_frames
+            .pop()
+            .map(|frame| self.frames[frame].as_ptr() as u64)
+            .map(PhysAddr::new)
+            .map(PhysFrame::from_start_address)
+            .transpose()
+            .ok()
+            .flatten()
     }
 }
 
 impl<const N: usize> FrameDeallocator<Size4KiB> for StaticFrameAllocator<N> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
-        debug_assert!(self.free_frames < N);
         let off = frame.start_address().as_u64() - self.frames[0].as_ptr() as u64;
         let idx = (off / Size4KiB::SIZE) as usize;
-        self.free_frame_stack[self.free_frames] = idx;
-        self.free_frames += 1;
+        self.free_frames.push(idx);
     }
 }
 
