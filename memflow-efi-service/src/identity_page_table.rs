@@ -274,7 +274,7 @@ impl IdentityPageTable {
         // Align largest mapping address to the next PML4 entry
         let remap_pml4_id = (largest_identity_mapping as usize + REMAP_ALIGN) / REMAP_SIZE;
 
-        for i in remap_pml4_id..256 {
+        for i in remap_pml4_id..512 {
             self.free_virt_remaps.push(i);
         }
 

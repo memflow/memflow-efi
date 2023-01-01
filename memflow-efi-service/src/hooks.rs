@@ -49,8 +49,6 @@ pub struct MemflowCommand {
 }
 const _: [(); core::mem::size_of::<MemflowCommand>()] = [(); 32];
 
-static mut GLOBAL_BUFFER: [u8; 0x1000] = [0u8; 0x1000];
-
 static mut KERNEL_MAPPED: u8 = 0;
 
 static mut VAR_CALLED: usize = 0;
@@ -80,17 +78,12 @@ eficall! {fn hook_set_variable(
 
                 let old_dtb = Cr3::read();
 
-                debug!("old_dtb={old_dtb:?}");
-
                 let dtb = unsafe { IDENTITY_PAGE_TABLE_BASE };
-                let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) }; // CRASH
-
-                debug!("dtb={dtb:?}");
+                let dtb = unsafe{ PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(dtb)) };
 
                 return x86_64::instructions::interrupts::without_interrupts(|| {
                     if unsafe { KERNEL_MAPPED == 0 } {
                         unsafe {
-                            debug!("First time mapping");
                             core::arch::asm!(
                                 // Write new dtb
                                 "mov cr3, rdi",
@@ -110,71 +103,54 @@ eficall! {fn hook_set_variable(
                             );
 
                             KERNEL_MAPPED = 1;
+                            debug!("First time mapping");
                         }
                     } else {
                         unsafe { Cr3::write(dtb, Cr3Flags::empty()) };
                     }
 
                     // Map user buffer into a free memory range
+                    debug!("Identity mapping {:x}", mfcmd.dst as usize);
                     let identity = unsafe { &mut IDENTITY_PAGE_TABLE };
-
-                    debug!("Identity mapping {:x}", mfcmd.src as usize);
-                    let mapping = identity.remap_range(mfcmd.src as usize, mfcmd.len, old_dtb.0);
+                    let mapping = identity.remap_range(mfcmd.dst as usize, mfcmd.len, old_dtb.0); // TODO: crashy
 
                     let mut result = efi::Status::ACCESS_DENIED;
 
-                    if let Some((handle, remapped_src)) = mapping {
-                        debug!("Identity mapped {remapped_src:x}");
+                    //if let Some((handle, remapped_dst)) = mapping {
+                    {
+                        let remapped_dst = mfcmd.dst;
+                        //debug!("Identity mapped {remapped_dst:x}");
 
                         // Fully flush TLB again now that we mapped the buffer in
-                        unsafe {
-                            Cr3::write(dtb, Cr3Flags::empty());
-                        }
+//                        unsafe {
+  //                          Cr3::write(dtb, Cr3Flags::empty());
+    //                    }
 
-                        //let test = alloc::boxed::Box::new(133742usize);
-                        //return efi::Status::from_usize(*test.as_ref());
-
-                        // iterate page by page
-                        // TODO: replace with memflow's pagechunk iterator
-                        /*
-                        for (page_addr, out) in CSliceMut::from(out).page_chunks(addr.address(), 0x1000 /* TODO: EFI_PAGE_SIZE */) {
-                        }
-                        */
-                        // TODO: tests
+                        // iterate buffer page by page
                         let mem_maps = unsafe { &EFI_MEM_MAPS };
-
                         let mut offs = 0usize;
                         while offs < mfcmd.len {
-                            let addr = remapped_src + offs;
-                            let addr_end = ((addr + 0x1000) - (addr + 0x1000) % 0x1000).min(remapped_src + mfcmd.len);
+                            let addr = mfcmd.src as usize + offs;
+                            let addr_end = ((addr + 0x1000) - (addr + 0x1000) % 0x1000).min(mfcmd.src as usize + mfcmd.len);
                             let addr_align = addr - addr % 0x1000;
                             let len_align = addr_end - addr; // FB for first chunk
 
-                            trace!("Try Copy {addr_align:x}");
+                            //trace!("Try Copy {addr_align:x}");
 
+                            // check if 'src' is a valid physical memory region
                             if mem_maps.is_mapped(addr_align as u64) {
-
-
                                 //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
 
-                                /*
-                                if let Some(buffer_phys_addr) = virt_to_phys(old_dtb.0.start_address().as_u64(), (mfcmd.dst as usize + offs) as u64) {
-                                    //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr as *mut u8, len_align) };
-                                    unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, buffer_phys_addr  as *mut u8, len_align) };
-                                }
-                                */
+                                //trace!("Copy {:x}", addr);
 
-                                //crate::utils::wait_for_debugger();
-                                trace!("Copy {:x}", addr);
-
-                                unsafe { core::ptr::write_bytes(addr as *mut u8, 2, len_align) };
+                               // unsafe { core::ptr::write_bytes((remapped_dst as usize + offs) as *mut u8, 2, len_align) };
 
                                 // unsafe { core::ptr::copy_nonoverlapping(global_buffer_addr, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
 
                                 result = efi::Status::SUCCESS;
                             } else {
-                                // TODO: needed, buffers are 0-filled anyways
-                                unsafe { core::ptr::write_bytes(addr as *mut u8, 0, len_align) };
+                                // TODO: unneeded, buffers are 0-filled anyways
+                                //unsafe { core::ptr::write_bytes((remapped_dst + offs) as *mut u8, 0, len_align) };
                             }
 
                             offs += len_align;
