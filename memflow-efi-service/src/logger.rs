@@ -6,8 +6,6 @@ use core::{
 
 use x86_64::instructions::port::PortWriteOnly;
 
-use crate::utils::Mutex;
-
 pub struct MemReg<const N: usize> {
     reg: [u8; N],
     pos: usize,
@@ -47,6 +45,7 @@ pub static mut MEM_LOGGER: MemReg<0x1000> = MemReg::new();
 
 pub static mut PORT: PortWriteOnly<u8> = PortWriteOnly::new(0x3E8);
 
+// TODO: feature flag
 pub static mut MEM_LOGGING: bool = true;
 
 static LOG_LEVEL_NAMES: [&str; 5] = ["ERROR", "WARN", "INFO", "DEBUG", "TRACE"];

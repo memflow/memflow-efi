@@ -15,14 +15,14 @@ qemu-system-x86_64 \
     -drive if=pflash,format=raw,readonly=on,file="${OVMF_PREFIX}/OVMF_VARS.fd" \
     -drive format=raw,file=efi.raw \
     $QEMU_ARGS \
-	-object memory-backend-file,id=pc.ram,size=8G,mem-path=/tmp/mem,prealloc=on,share=on,pmem=on \
+	-object memory-backend-file,id=pc.ram,size=8G,mem-path=/tmp/mem,prealloc=on,share=on \
 	-machine memory-backend=pc.ram \
     -m 8G \
 	-monitor stdio \
 	-serial null \
 	-serial null \
 	-serial null
-    #-serial tcp::9080,server &
+    #-serial tcp::9080,server
 
 # wait for qemu startup
 #while :

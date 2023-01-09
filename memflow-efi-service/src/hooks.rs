@@ -109,51 +109,52 @@ eficall! {fn hook_set_variable(
                         unsafe { Cr3::write(dtb, Cr3Flags::empty()) };
                     }
 
-                    // Map user buffer into a free memory range
-                    debug!("Identity mapping {:x}", mfcmd.dst as usize);
-                    let identity = unsafe { &mut IDENTITY_PAGE_TABLE };
-                    let mapping = identity.remap_range(mfcmd.dst as usize, mfcmd.len, old_dtb.0); // TODO: crashy
-
+                    // open a new scope so we can be sure everything is dropped by the time we swap cr3 again
                     let mut result = efi::Status::ACCESS_DENIED;
-
-                    //if let Some((handle, remapped_dst)) = mapping {
                     {
-                        let remapped_dst = mfcmd.dst;
-                        //debug!("Identity mapped {remapped_dst:x}");
+                        // Map user buffer into a free memory range
+                        debug!("Identity mapping {:x}", mfcmd.dst as usize);
+                        let identity = unsafe { &mut IDENTITY_PAGE_TABLE };
+                        let mapping = identity.remap_range(mfcmd.dst as usize, mfcmd.len, old_dtb.0); // TODO: crashy
 
-                        // Fully flush TLB again now that we mapped the buffer in
-//                        unsafe {
-  //                          Cr3::write(dtb, Cr3Flags::empty());
-    //                    }
+                        if let Some((handle, remapped_dst)) = mapping {
+                            //let remapped_dst = mfcmd.dst;
+                            debug!("Identity mapped {remapped_dst:x}");
 
-                        // iterate buffer page by page
-                        let mem_maps = unsafe { &EFI_MEM_MAPS };
-                        let mut offs = 0usize;
-                        while offs < mfcmd.len {
-                            let addr = mfcmd.src as usize + offs;
-                            let addr_end = ((addr + 0x1000) - (addr + 0x1000) % 0x1000).min(mfcmd.src as usize + mfcmd.len);
-                            let addr_align = addr - addr % 0x1000;
-                            let len_align = addr_end - addr; // FB for first chunk
-
-                            //trace!("Try Copy {addr_align:x}");
-
-                            // check if 'src' is a valid physical memory region
-                            if mem_maps.is_mapped(addr_align as u64) {
-                                //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
-
-                                //trace!("Copy {:x}", addr);
-
-                               // unsafe { core::ptr::write_bytes((remapped_dst as usize + offs) as *mut u8, 2, len_align) };
-
-                                // unsafe { core::ptr::copy_nonoverlapping(global_buffer_addr, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
-
-                                result = efi::Status::SUCCESS;
-                            } else {
-                                // TODO: unneeded, buffers are 0-filled anyways
-                                //unsafe { core::ptr::write_bytes((remapped_dst + offs) as *mut u8, 0, len_align) };
+                            // Fully flush TLB again now that we mapped the buffer in
+                            unsafe {
+                                Cr3::write(dtb, Cr3Flags::empty());
                             }
 
-                            offs += len_align;
+                            // iterate buffer page by page
+                            let mem_maps = unsafe { &EFI_MEM_MAPS };
+                            let mut offs = 0usize;
+                            while offs < mfcmd.len {
+                                let addr = mfcmd.src as usize + offs;
+                                let addr_end = ((addr + 0x1000) - (addr + 0x1000) % 0x1000).min(mfcmd.src as usize + mfcmd.len);
+                                let addr_align = addr - addr % 0x1000;
+                                let len_align = addr_end - addr; // FB for first chunk
+
+                                //trace!("Try Copy {addr_align:x}");
+
+                                // check if 'src' is a valid physical memory region
+                                if mem_maps.is_mapped(addr_align as u64) {
+                                    //unsafe { core::ptr::copy_nonoverlapping(addr as *mut u8, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+
+                                    //trace!("Copy {:x}", addr);
+
+                                    unsafe { core::ptr::write_bytes((remapped_dst as usize + offs) as *mut u8, 2, len_align) };
+
+                                    // unsafe { core::ptr::copy_nonoverlapping(global_buffer_addr, (mfcmd.dst as usize + offs) as *mut u8, len_align) };
+
+                                    result = efi::Status::SUCCESS;
+                                } else {
+                                    // TODO: unneeded, buffers are 0-filled anyways
+                                    //unsafe { core::ptr::write_bytes((remapped_dst + offs) as *mut u8, 0, len_align) };
+                                }
+
+                                offs += len_align;
+                            }
                         }
                     }
 

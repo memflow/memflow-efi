@@ -251,19 +251,18 @@ pub extern "C" fn main(
     image_handle: efi::Handle,
     raw_system_table: *mut efi::SystemTable,
 ) -> efi::Status {
-    info!("enter main()");
-
     #[cfg(debug_assertions)]
     {
-        info!("Waiting for debugger");
         utils::wait_for_debugger();
     }
+
+    // setup system_table
+    unsafe { SYSTEM_TABLE = MaybeUninit::new(raw_system_table.read()) };
 
     // setup allocator
     init_allocator();
 
-    // setup system_table
-    unsafe { SYSTEM_TABLE = MaybeUninit::new(raw_system_table.read()) };
+    info!("enter main()");
 
     init_dummy_protocol(image_handle);
 

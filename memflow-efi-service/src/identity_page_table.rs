@@ -120,9 +120,9 @@ impl<'a, T, const N: usize> Drop for DropPush<'a, T, N> {
 
 #[repr(align(4096))]
 pub struct IdentityPageTable {
-    page_table: PageTable, // TODO: align?
+    page_table: PageTable,
     allocator: StaticFrameAllocator<10000>,
-    free_virt_remaps: ConcurrentStaticVec<usize, 256>,
+    free_virt_remaps: ConcurrentStaticVec<usize, 512>,
 }
 
 impl IdentityPageTable {
@@ -194,90 +194,40 @@ impl IdentityPageTable {
             while bytes_left > 0 {
                 let map_addr = mem_map.physical_start + bytes_offset;
 
-                /*if bytes_left >= Size1GiB::SIZE {
-                    match unsafe {
-                        pt_mapper.map_to(
-                            Page::<Size1GiB>::from_start_address_unchecked(VirtAddr::new(
-                                mem_map.physical_start + bytes_offset,
-                            )),
-                            PhysFrame::from_start_address_unchecked(PhysAddr::new(
-                                mem_map.physical_start + bytes_offset,
-                            )),
-                            flags | PageTableFlags::HUGE_PAGE,
-                            &mut self.allocator,
-                        )
-                    } {
-                        Ok(_) => debug!(
-                            "1gib page table entry for address {:x} created",
+                match unsafe {
+                    pt_mapper.identity_map(
+                        PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(
+                            map_addr,
+                        )),
+                        flags,
+                        &mut self.allocator,
+                    )
+                } {
+                    Ok(_) => {
+                        /*debug!(
+                            "4kib page table entry for address {:x} created",
                             mem_map.physical_start + bytes_offset
-                        ),
-                        Err(err) => {
-                            error!("could not add 1gib page_table entry, {:?}", err);
-                        }
+                        )*/
                     }
-                    bytes_offset += Size1GiB::SIZE;
-                    bytes_left -= Size1GiB::SIZE;
-                } else if bytes_left >= Size2MiB::SIZE {
-                    info!("mapping 2mib page");
-                    match unsafe {
-                        pt_mapper.map_to(
-                            Page::<Size2MiB>::from_start_address_unchecked(VirtAddr::new(
-                                mem_map.physical_start + bytes_offset,
-                            )),
-                            PhysFrame::from_start_address_unchecked(PhysAddr::new(
-                                mem_map.physical_start + bytes_offset,
-                            )),
-                            flags | PageTableFlags::HUGE_PAGE,
-                            &mut self.allocator,
-                        )
-                    } {
-                        Ok(_) => debug!(
-                            "2mib page table entry for address {:x} created",
-                            mem_map.physical_start + bytes_offset
-                        ),
-                        Err(err) => {
-                            return Err(format!("could not add 2mib page_table entry, for mem_map at {:x} with size {:x}: {:?}", mem_map.physical_start, mem_map.number_of_pages* Size4KiB::SIZE, err));
-                        }
+                    Err(err) => {
+                        return Err(format!("could not add 4kib page_table entry, for mem_map at {:x} with size {:x}: {:?}", mem_map.physical_start, mem_map.number_of_pages* Size4KiB::SIZE, err));
                     }
-                    bytes_offset += Size2MiB::SIZE;
-                    bytes_left -= Size2MiB::SIZE;
-                } else*/
-                {
-                    match unsafe {
-                        pt_mapper.identity_map(
-                            PhysFrame::<Size4KiB>::from_start_address_unchecked(PhysAddr::new(
-                                map_addr,
-                            )),
-                            flags,
-                            &mut self.allocator,
-                        )
-                    } {
-                        Ok(_) => {
-                            /*debug!(
-                                "4kib page table entry for address {:x} created",
-                                mem_map.physical_start + bytes_offset
-                            )*/
-                        }
-                        Err(err) => {
-                            return Err(format!("could not add 4kib page_table entry, for mem_map at {:x} with size {:x}: {:?}", mem_map.physical_start, mem_map.number_of_pages* Size4KiB::SIZE, err));
-                        }
-                    }
+                }
 
-                    bytes_offset += Size4KiB::SIZE;
-                    bytes_left -= Size4KiB::SIZE;
-                    largest_identity_mapping =
-                        core::cmp::max(largest_identity_mapping, map_addr + Size4KiB::SIZE);
-                };
+                bytes_offset += Size4KiB::SIZE;
+                bytes_left -= Size4KiB::SIZE;
+                largest_identity_mapping =
+                    core::cmp::max(largest_identity_mapping, map_addr + Size4KiB::SIZE);
             }
         }
 
         // Align largest mapping address to the next PML4 entry
         let remap_pml4_id = (largest_identity_mapping as usize + REMAP_ALIGN) / REMAP_SIZE;
+        info!("remap_pml4_id={}", remap_pml4_id);
 
         for i in remap_pml4_id..512 {
             self.free_virt_remaps.push(i);
         }
-
         info!("Remappable entries: {}", self.free_virt_remaps.len());
 
         Ok(())
